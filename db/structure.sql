@@ -1576,7 +1576,9 @@ CREATE TABLE public.posts (
     last_commented_at timestamp without time zone,
     has_active_children boolean DEFAULT false,
     bit_flags bigint DEFAULT 0 NOT NULL,
-    tag_count_meta integer DEFAULT 0 NOT NULL
+    tag_count_meta integer DEFAULT 0 NOT NULL,
+    tag_count_species integer DEFAULT 0 NOT NULL,
+    tag_count_trope integer DEFAULT 0 NOT NULL
 );
 
 
@@ -7173,6 +7175,8 @@ INSERT INTO "schema_migrations" (version) VALUES
 ('20250530193106'),
 ('20250530091115'),
 ('20250507024608'),
+('20241030061431'),
+('20241023173028'),
 ('20241023091114'),
 ('20241022174253'),
 ('20240607200251'),
