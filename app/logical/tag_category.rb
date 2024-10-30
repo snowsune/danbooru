@@ -12,6 +12,7 @@ module TagCategory
   CHARACTER = 4
   META = 5
   SPECIES = 6
+  TROPE = 7
 
   # Returns a hash mapping various tag categories to a numerical value.
   def mapping
@@ -24,6 +25,7 @@ module TagCategory
       "art" => 1,
       "meta" => 5,
       "species" => 6,
+      "trope" => 7,
       "general" => 0,
       "character" => 4,
       "copyright" => 3,
@@ -40,6 +42,7 @@ module TagCategory
       "Character" => 4,
       "General"   => 0,
       "Meta"      => 5,
+      "Trope"     => 7,
     }
   end
 
@@ -52,6 +55,7 @@ module TagCategory
       3 => "copyright",
       1 => "artist",
       5 => "meta",
+      7 => "trope",
     }
   end
 
@@ -63,11 +67,12 @@ module TagCategory
       "gen"     => "general",
       "meta"    => "meta",
       "species" => "species",
+      "trope"   => "trope",
     }
   end
 
   def categories
-    %w[general character copyright artist meta species]
+    %w[general character copyright artist meta species trope]
   end
 
   def category_ids
@@ -75,17 +80,17 @@ module TagCategory
   end
 
   def short_name_list
-    %w[art copy char gen meta species]
+    %w[art copy char gen meta species trope]
   end
 
   # The order of tags on the post page tag list.
   def split_header_list
-    %w[artist copyright character species general meta]
+    %w[artist copyright character species general trope meta]
   end
 
   # The order of tags inside the tag edit box, and on the comments page.
   def categorized_list
-    %w[artist copyright character species meta general]
+    %w[artist copyright character species meta trope general]
   end
 
   # Which tag categories to show in the related tags box for a tag of the given type.
@@ -95,8 +100,9 @@ module TagCategory
       ARTIST    => [COPYRIGHT, CHARACTER, GENERAL],
       CHARACTER => [COPYRIGHT, CHARACTER, GENERAL, SPECIES],
       COPYRIGHT => [COPYRIGHT, CHARACTER, GENERAL],
-      META      => [META, GENERAL],
+      META      => [META, GENERAL, TROPE],
       SPECIES   => [CHARACTER, GENERAL],
+      TROPE     => [META, GENERAL],
     }
   end
 
@@ -109,6 +115,7 @@ module TagCategory
       COPYRIGHT => [COPYRIGHT, CHARACTER, GENERAL, META],
       META      => [COPYRIGHT, CHARACTER, META, GENERAL],
       SPECIES   => [CHARACTER, GENERAL],
+      TROPE     => [META, GENERAL],
     }
   end
 

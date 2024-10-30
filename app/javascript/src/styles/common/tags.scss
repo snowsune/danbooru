@@ -58,7 +58,7 @@
   }
 }
 
-
+// Custom
 .tag-type-6 a, a.tag-type-6 {
   color: var(--species-tag-color);
 
@@ -68,6 +68,19 @@
 
   &:hover {
     color: var(--species-tag-hover-color);
+  }
+}
+
+// Custom
+.tag-type-7 a, a.tag-type-7 {
+  color: var(--trope-tag-color);
+
+  &:link, &:visited {
+    color: var(--trope-tag-color);
+  }
+
+  &:hover {
+    color: var(--trope-tag-hover-color);
   }
 }
 
