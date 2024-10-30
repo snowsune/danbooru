@@ -324,8 +324,10 @@ html, body[data-current-user-theme="light"] {
   --general-tag-hover-color: var(--link-hover-color);
   --meta-tag-color: var(--orange-3);
   --meta-tag-hover-color: var(--orange-2);
-  --species-tag-color: var(--magenta-2);
-  --species-tag-hover-color: var(--magenta-3);
+  --species-tag-color: var(--magenta-2); // Custom!
+  --species-tag-hover-color: var(--magenta-3); // Custom!
+  --trope-tag-color: var(--grey-4); // Custom!
+  --trope-tag-hover-color: var(--orange-4); // Custom!
 
   --user-admin-color: var(--red-5);
   --user-moderator-color: var(--character-tag-color);
