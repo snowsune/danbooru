@@ -1522,7 +1522,9 @@ CREATE TABLE public.posts (
     last_commented_at timestamp without time zone,
     has_active_children boolean DEFAULT false,
     bit_flags bigint DEFAULT 0 NOT NULL,
-    tag_count_meta integer DEFAULT 0 NOT NULL
+    tag_count_meta integer DEFAULT 0 NOT NULL,
+    tag_count_species integer DEFAULT 0 NOT NULL,
+    tag_count_trope integer DEFAULT 0 NOT NULL
 );
 
 
@@ -6826,6 +6828,8 @@ ALTER TABLE ONLY public.user_upgrades
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20241030061431'),
+('20241023173028'),
 ('20240607200251'),
 ('20240607200250'),
 ('20240607200249'),
