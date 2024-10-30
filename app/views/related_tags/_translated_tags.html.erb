@@ -1,4 +1,5 @@
 <% if source.present? %>
+  <button id="check-all-translated-tags" type="button">Check All Translated Tags</button>
   <% tags = source.artists.map(&:tag) %>
   <% tags += [Tag.find_by_name("banned_artist")].compact if source.artists.any?(&:is_banned?) %>
   <% tags += source.translated_tags %>

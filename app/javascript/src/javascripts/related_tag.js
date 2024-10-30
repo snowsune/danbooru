@@ -16,6 +16,9 @@ RelatedTag.initialize_all = function() {
   $(document).on("input.danbooru.relatedTags", "#post_tag_string", RelatedTag.update_selected);
   $(document).on("click.danbooru.relatedTags", "#post_tag_string", RelatedTag.update_current_tag);
 
+  // Custom!
+  $(document).on("click", "#check-all-translated-tags", RelatedTag.checkAllTranslatedTags);
+
   $(document).on("danbooru:open-post-edit-dialog", RelatedTag.show);
 
   // Initialize the recent/favorite/translated/artist tag columns once, the first time the related tags are shown.
@@ -155,6 +158,15 @@ RelatedTag.show = function(e) {
 $(function() {
   RelatedTag.initialize_all();
 });
+
+// Custom click!
+RelatedTag.checkAllTranslatedTags = function() {
+  $(".translated-tags-related-tags-column li").each((_, li) => {
+    $(li).addClass("selected");
+    $(li).find("input[type='checkbox']").prop("checked", true);
+  });
+};
+
 
 export default RelatedTag
 
