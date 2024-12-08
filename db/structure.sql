@@ -1153,7 +1153,9 @@ CREATE TABLE public.news_updates (
     creator_id integer NOT NULL,
     updater_id integer NOT NULL,
     created_at timestamp without time zone NOT NULL,
-    updated_at timestamp without time zone NOT NULL
+    updated_at timestamp without time zone NOT NULL,
+    is_deleted boolean DEFAULT false NOT NULL,
+    duration interval DEFAULT '14 days'::interval NOT NULL
 );
 
 
@@ -6830,6 +6832,8 @@ SET search_path TO "$user", public;
 INSERT INTO "schema_migrations" (version) VALUES
 ('20241030061431'),
 ('20241023173028'),
+('20241023091114'),
+('20241022174253'),
 ('20240607200251'),
 ('20240607200250'),
 ('20240607200249'),
