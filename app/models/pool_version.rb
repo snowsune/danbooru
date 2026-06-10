@@ -3,7 +3,7 @@
 class PoolVersion < ApplicationRecord
   dtext_attribute :description # defines :dtext_description
 
-  belongs_to :updater, :class_name => "User"
+  belongs_to :updater, class_name: "User"
   belongs_to :pool
 
   def self.enabled?
@@ -36,7 +36,7 @@ class PoolVersion < ApplicationRecord
     end
 
     def search(params, current_user)
-      q = search_attributes(params, [:id, :created_at, :updated_at, :pool_id, :post_ids, :added_post_ids, :removed_post_ids, :updater_id, :description, :description_changed, :name, :name_changed, :version, :is_active, :is_deleted, :category], current_user: current_user)
+      q = search_attributes(params, %i[id created_at updated_at pool_id post_ids added_post_ids removed_post_ids updater_id description description_changed name name_changed version is_active is_deleted category], current_user: current_user)
 
       if params[:post_id]
         q = q.for_post_id(params[:post_id].to_i)
@@ -96,12 +96,12 @@ class PoolVersion < ApplicationRecord
   end
 
   def previous
-    @previous ||= PoolVersion.where("pool_id = ? and version < ?", pool_id, version).order("version desc").limit(1).to_a
+    @previous ||= PoolVersion.where("pool_id = ? and version < ?", pool_id, version).order(version: :desc).limit(1).to_a
     @previous.first
   end
 
   def current
-    @current ||= PoolVersion.where(pool_id: pool_id).order("version desc").limit(1).to_a
+    @current ||= PoolVersion.where(pool_id: pool_id).order(version: :desc).limit(1).to_a
     @current.first
   end
 
@@ -110,6 +110,7 @@ class PoolVersion < ApplicationRecord
       posts_changed: "Posts",
       name: "Renamed",
       description: "Description",
+      category: "Category",
       was_deleted: "Deleted",
       was_undeleted: "Undeleted",
       was_activated: "Activated",

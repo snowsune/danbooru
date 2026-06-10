@@ -20,6 +20,12 @@ require "action_view/railtie"
 # require "action_cable/engine"
 require "rails/test_unit/railtie"
 
+require "dotenv"
+
+# Patch Dotenv to log at debug level so that "[dotenv] Loaded .env" messages aren't seen on startup.
+def (Dotenv::Rails.logger).add(_level, ...) = super(Logger::DEBUG, ...)
+Dotenv::Rails.load
+
 # Require the gems listed in Gemfile, including any gems
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
@@ -49,16 +55,13 @@ module Danbooru
     config.app_generators.scaffold_controller :responders_controller
 
     # Initialize configuration defaults for originally generated Rails version.
-    config.load_defaults 7.1
+    config.load_defaults 8.0
     config.active_record.schema_format = :sql
-
-    # https://guides.rubyonrails.org/configuring.html#config-active-support-cache-format-version
-    config.active_support.cache_format_version = 7.1
 
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.
     # Common ones are `templates`, `generators`, or `middleware`, for example.
-    config.autoload_lib(ignore: %w(assets tasks dtext_rb))
+    config.autoload_lib(ignore: %w[assets tasks dtext_rb])
 
     # Configuration for the application, engines, and railties goes here.
     #
@@ -68,8 +71,8 @@ module Danbooru
     # config.time_zone = "Central Time (US & Canada)"
     # config.eager_load_paths << Rails.root.join("extras")
 
-    config.autoload_paths += %W(#{config.root}/app/presenters #{config.root}/app/logical/concerns #{config.root}/app/logical #{config.root}/app/mailers)
-    config.time_zone = 'Eastern Time (US & Canada)'
+    config.autoload_paths += %W[#{config.root}/app/presenters #{config.root}/app/logical/concerns #{config.root}/app/logical #{config.root}/app/mailers]
+    config.time_zone = "Eastern Time (US & Canada)"
     config.active_model.i18n_customize_full_message = true
 
     # Hide sensitive model attributes and request params in exception messages
@@ -77,7 +80,7 @@ module Danbooru
     # request param containing the word 'password' etc.
     #
     # https://guides.rubyonrails.org/configuring.html#config-filter-parameters
-    config.filter_parameters += [:password, :api_key, :secret, :ip_addr, :address, :email_verification_key, :signed_id] if Rails.env.production?
+    config.filter_parameters += [:password, :api_key, :secret, :ip_addr, :address, :email_verification_key, :signed_id] if !Rails.env.local?
 
     raise "Danbooru.config.secret_key_base not configured" if Danbooru.config.secret_key_base.blank?
     config.secret_key_base = Danbooru.config.secret_key_base
@@ -90,12 +93,16 @@ module Danbooru
     # app/jobs/mail_delivery_job.rb
     config.action_mailer.delivery_job = "MailDeliveryJob"
 
-    logger           = ActiveSupport::Logger.new(STDERR)
+    logger           = ActiveSupport::Logger.new($stderr)
     config.logger    = ActiveSupport::TaggedLogging.new(logger)
-    config.log_tags  = [->(req) {"PID:#{Process.pid}"}]
+    config.log_tags  = [->(_req) { "PID:#{Process.pid}" }]
     config.log_level = Danbooru.config.log_level
 
     config.action_controller.action_on_unpermitted_parameters = :raise
+
+    # https://guides.rubyonrails.org/configuring.html#config-active-record-async-query-executor
+    config.active_record.async_query_executor = :global_thread_pool
+    config.active_record.global_executor_concurrency = Danbooru.config.max_concurrency.to_i
 
     if ENV["DOCKER_IMAGE_REVISION"].present?
       config.x.git_hash = ENV["DOCKER_IMAGE_REVISION"]
@@ -106,7 +113,7 @@ module Danbooru
     end
 
     # In development mode, allow the site to be embedded in an <iframe> so that it can be viewed inside things like VS Code or Github Codespaces.
-    config.action_dispatch.default_headers.delete("X-Frame-Options") if Rails.env.development?
+    config.action_dispatch.default_headers.delete("X-Frame-Options") if Rails.env.local?
 
     # Disable the origin check to fix `HTTP Origin header didn't match request.base_url` errors when running behind a reverse
     # proxy. This is necessary because some reverse proxies (such as Github Codespaces) set the Origin header incorrectly.

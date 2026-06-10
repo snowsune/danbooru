@@ -4,12 +4,7 @@
 # @see https://docs.joinmastodon.org/api
 class Source::Extractor
   class Mastodon < Source::Extractor
-    def domain
-      case site_name
-      when "Pawoo" then "pawoo.net"
-      when "Baraag" then "baraag.net"
-      end
-    end
+    delegate :domain, to: :parsed_url
 
     def image_urls
       if parsed_url.image_url?
@@ -59,6 +54,14 @@ class Source::Extractor
       parsed_url.work_id || parsed_referer&.work_id
     end
 
+    def published_at
+      if parsed_url.image_url?
+        nil
+      elsif api_response["created_at"]
+        Time.iso8601(api_response["created_at"]).utc
+      end
+    end
+
     def artist_commentary_desc
       commentary = "".dup
       commentary << "<p>#{api_response["spoiler_text"]}</p>" if api_response["spoiler_text"].present?
@@ -87,18 +90,11 @@ class Source::Extractor
     end
 
     memoize def api_response
-      http.cache(1.minute).parsed_get(status_api_url) || {}
+      parsed_get(status_api_url) || {}
     end
 
     def http
-      super.headers(Authorization: "Bearer #{access_token}")
-    end
-
-    def access_token
-      case site_name
-      when "Pawoo" then Danbooru.config.pawoo_access_token
-      when "Baraag" then Danbooru.config.baraag_access_token
-      end
+      super.headers(Authorization: "Bearer #{credentials[:access_token]}")
     end
   end
 end

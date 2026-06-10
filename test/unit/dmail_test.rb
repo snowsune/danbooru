@@ -1,9 +1,9 @@
-require 'test_helper'
+require "test_helper"
 
 class DmailTest < ActiveSupport::TestCase
   context "A dmail" do
     setup do
-      @user = FactoryBot.create(:user)
+      @user = create(:user)
       CurrentUser.user = @user
     end
 
@@ -54,14 +54,14 @@ class DmailTest < ActiveSupport::TestCase
     end
 
     should "should parse user names" do
-      dmail = FactoryBot.build(:dmail, :owner => @user)
+      dmail = build(:dmail, owner: @user)
       dmail.to_id = nil
       dmail.to_name = @user.name
       assert(dmail.to_id == @user.id)
     end
 
     should "construct a response" do
-      dmail = FactoryBot.create(:dmail, :owner => @user)
+      dmail = create(:dmail, owner: @user)
       response = dmail.build_response
       assert_equal("Re: #{dmail.title}", response.title)
       assert_equal(dmail.from_id, response.to_id)
@@ -69,7 +69,7 @@ class DmailTest < ActiveSupport::TestCase
     end
 
     should "create a copy for each user" do
-      @new_user = FactoryBot.create(:user)
+      @new_user = create(:user)
       assert_difference("Dmail.count", 2) do
         Dmail.create_split(from: CurrentUser.user, to: @new_user, title: "foo", body: "foo")
       end
@@ -87,36 +87,21 @@ class DmailTest < ActiveSupport::TestCase
 
     context "that is automated" do
       setup do
-        @bot = FactoryBot.create(:user)
+        @bot = create(:user)
         User.stubs(:system).returns(@bot)
       end
 
       should "only create a copy for the recipient" do
         Dmail.create_automated(to: @user, title: "test", body: "test")
 
-        assert @user.dmails.exists?(from: @bot, title: "test", body: "test")
-        assert !@bot.dmails.exists?(from: @bot, title: "test", body: "test")
+        assert_equal(true, @user.dmails.exists?(from: @bot, title: "test", body: "test"))
+        assert_equal(false, @bot.dmails.exists?(from: @bot, title: "test", body: "test"))
       end
 
       should "fail gracefully if recipient doesn't exist" do
         assert_nothing_raised do
           dmail = Dmail.create_automated(to_name: "this_name_does_not_exist", title: "test", body: "test")
           assert_equal(["must exist"], dmail.errors[:to])
-        end
-      end
-    end
-
-    context "sending a dmail" do
-      should "fail if the user has sent too many dmails recently" do
-        10.times do
-          Dmail.create_split(from: @user, to: create(:user), title: "blah", body: "blah")
-        end
-
-        assert_no_difference("Dmail.count") do
-          @dmail = Dmail.create_split(from: @user, to: create(:user), title: "blah", body: "blah")
-
-          assert_equal(false, @dmail.valid?)
-          assert_equal(["You can't send dmails to more than 10 users per hour"], @dmail.errors[:base])
         end
       end
     end
@@ -147,7 +132,7 @@ class DmailTest < ActiveSupport::TestCase
     end
 
     context "during validation" do
-      subject { FactoryBot.build(:dmail) }
+      subject { build(:dmail) }
 
       should_not allow_value("").for(:title)
       should_not allow_value(" ").for(:title)
@@ -158,6 +143,14 @@ class DmailTest < ActiveSupport::TestCase
       should_not allow_value(nil).for(:to)
       should_not allow_value(nil).for(:from)
       should_not allow_value(nil).for(:owner)
+      should_not allow_value((["!post #1"] * 10).join("\n")).for(:body)
+
+      should "not allow NSFW media embeds" do
+        post = create(:post, rating: "e")
+        dmail = build(:dmail, body: "!post ##{post.id}").tap(&:validate)
+
+        assert_includes(dmail.errors[:body], "can't include NSFW images")
+      end
     end
   end
 end

@@ -7,16 +7,17 @@ class IpBan < ApplicationRecord
   belongs_to :creator, class_name: "User"
   has_many :mod_actions, as: :subject, dependent: :destroy
 
+
   validate :validate_ip_addr
-  validates :reason, visible_string: true
+  validates :reason, visible_string: true, length: { maximum: 140 }, if: :reason_changed?
 
   after_save :create_mod_action
 
   deletable
-  enum category: {
+  enum :category, {
     full: 0,
     partial: 100,
-  }, _suffix: "ban"
+  }, suffix: "ban"
 
   def self.visible(user)
     if user.is_moderator?
@@ -39,7 +40,7 @@ class IpBan < ApplicationRecord
   end
 
   def self.search(params, current_user)
-    q = search_attributes(params, [:id, :created_at, :updated_at, :ip_addr, :reason, :is_deleted, :category, :hit_count, :last_hit_at, :creator], current_user: current_user)
+    q = search_attributes(params, %i[id created_at updated_at ip_addr reason is_deleted category hit_count last_hit_at creator], current_user: current_user)
 
     case params[:order]
     when /\A(created_at|updated_at|last_hit_at)(?:_(asc|desc))?\z/i

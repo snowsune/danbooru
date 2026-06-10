@@ -2,28 +2,34 @@
 
 class Artist < ApplicationRecord
   extend Memoist
+
   class RevertError < StandardError; end
 
   attr_accessor :url_string_changed
 
   deletable
 
-  normalize :name, :normalize_name
-  normalize :group_name, :normalize_other_name
-  normalize :other_names, :normalize_other_names
-  array_attribute :other_names # XXX must come after `normalize :other_names`
+  normalizes :name, with: ->(name) { Artist.normalize_name(name) }
+  normalizes :group_name, with: ->(name) { Artist.normalize_other_name(name) }
+  normalizes :other_names, with: ->(names) { Artist.normalize_other_names(names) }
+  array_attribute :other_names # XXX must come after `normalizes :other_names`
 
   validate :validate_artist_name
-  validates :name, tag_name: true, uniqueness: true
+  validate :validate_other_names, if: :other_names_changed?
+  validate :validate_urls
+  validates :name, tag_name: true, uniqueness: true, if: :name_changed?
+  validates :group_name, length: { maximum: 80 }, if: :group_name_changed?
+  validates :other_names, length: { maximum: 50, too_long: "can't have more than 50 names" }, if: :other_names_changed?
   after_validation :add_url_warnings
 
+  before_save :remove_redundant_other_names
   before_save :update_tag_category
   after_save :create_version
   after_save :clear_url_string_changed
 
-  has_many :members, :class_name => "Artist", :foreign_key => "group_name", :primary_key => "name"
+  has_many :members, class_name: "Artist", foreign_key: "group_name", primary_key: "name"
   has_many :urls, dependent: :destroy, class_name: "ArtistURL", autosave: true
-  has_many :versions, -> {order("artist_versions.id ASC")}, :class_name => "ArtistVersion"
+  has_many :versions, -> { order("artist_versions.id ASC") }, class_name: "ArtistVersion"
   has_many :mod_actions, as: :subject, dependent: :destroy
   has_one :wiki_page, -> { active }, foreign_key: "title", primary_key: "name"
   has_one :tag_alias, -> { active }, foreign_key: "antecedent_name", primary_key: "name"
@@ -64,6 +70,12 @@ class Artist < ApplicationRecord
       self.url_string_changed = false
     end
 
+    def validate_urls
+      if urls.any?(&:new_record?) && urls.size > 150
+        errors.add(:urls, "can't have more than 150 URLs")
+      end
+    end
+
     class_methods do
       # Find all artist URLs matching `regex`, and replace the `from` regex with the `to` string.
       def rewrite_urls(regex, from, to)
@@ -81,7 +93,7 @@ class Artist < ApplicationRecord
       end
 
       def normalize_other_names(other_names)
-        other_names.map { |name| normalize_other_name(name) }.uniq.reject(&:blank?)
+        other_names.map { |name| normalize_other_name(name) }.uniq.compact_blank
       end
 
       # XXX Differences from wiki page other names: allow uppercase, use NFC
@@ -93,6 +105,10 @@ class Artist < ApplicationRecord
 
     def pretty_name
       name.tr("_", " ")
+    end
+
+    def remove_redundant_other_names
+      self.other_names -= [name] if name_changed? || other_names_changed?
     end
   end
 
@@ -109,14 +125,14 @@ class Artist < ApplicationRecord
 
     def create_new_version
       ArtistVersion.create(
-        :artist_id => id,
-        :name => name,
-        :updater_id => CurrentUser.id,
-        :urls => url_array,
-        :is_deleted => is_deleted,
-        :is_banned => is_banned,
-        :other_names => other_names,
-        :group_name => group_name
+        artist_id: id,
+        name: name,
+        updater_id: CurrentUser.id,
+        urls: url_array,
+        is_deleted: is_deleted,
+        is_banned: is_banned,
+        other_names: other_names,
+        group_name: group_name,
       )
     end
 
@@ -132,7 +148,7 @@ class Artist < ApplicationRecord
 
     def revert_to!(version)
       if id != version.artist_id
-        raise RevertError.new("You cannot revert to a previous version of another artist.")
+        raise RevertError, "You cannot revert to a previous version of another artist."
       end
 
       self.name = version.name
@@ -183,6 +199,12 @@ class Artist < ApplicationRecord
       end
     end
 
+    def validate_other_names
+      if other_names.any? { |name| name.length > 80 }
+        errors.add(:other_names, "can't have names more than 80 characters long")
+      end
+    end
+
     def update_tag_category
       return unless !is_deleted? && name_changed? && tag.present?
 
@@ -195,10 +217,7 @@ class Artist < ApplicationRecord
   module BanMethods
     def unban!(current_user)
       with_lock do
-        ti = TagImplication.active.find_by(antecedent_name: name, consequent_name: "banned_artist")
-        ti&.update!(status: "deleted")
-
-        BulkUpdateRequestProcessor.mass_update(name, "-status:banned -banned_artist", user: current_user)
+        BulkUpdateRequestProcessor.mass_update(name, "-status:banned", user: current_user)
 
         CurrentUser.scoped(current_user) { update!(is_banned: false) }
         ModAction.log("unbanned artist ##{id}", :artist_unban, subject: self, user: current_user)
@@ -208,11 +227,6 @@ class Artist < ApplicationRecord
     def ban!(banner)
       with_lock do
         BulkUpdateRequestProcessor.mass_update(name, "status:banned", user: banner)
-
-        unless TagImplication.active.exists?(antecedent_name: name, consequent_name: "banned_artist")
-          Tag.find_or_create_by_name("banned_artist", category: "artist", current_user: banner)
-          TagImplication.approve!(antecedent_name: name, consequent_name: "banned_artist", approver: banner)
-        end
 
         CurrentUser.scoped(banner) { update!(is_banned: true) }
         ModAction.log("banned artist ##{id}", :artist_ban, subject: self, user: banner)
@@ -279,7 +293,7 @@ class Artist < ApplicationRecord
     end
 
     def search(params, current_user)
-      q = search_attributes(params, [:id, :created_at, :updated_at, :is_deleted, :is_banned, :name, :group_name, :other_names, :urls, :wiki_page, :tag_alias, :tag], current_user: current_user)
+      q = search_attributes(params, %i[id created_at updated_at is_deleted is_banned name group_name other_names urls wiki_page tag_alias tag], current_user: current_user)
 
       if params[:any_other_name_like]
         q = q.any_other_name_like(params[:any_other_name_like])
@@ -313,8 +327,11 @@ class Artist < ApplicationRecord
   end
 
   def add_url_warnings
-    urls.each do |url|
-      warnings.add(:base, url.warnings.full_messages.join("; ")) if url.warnings.any?
+    duplicate_artists = urls.select(&:new_record?).flat_map(&:duplicate_artists).sort.uniq.without(self)
+
+    if duplicate_artists.present?
+      names = duplicate_artists.map { |artist| "[[#{artist.name}]]" }
+      warnings.add(:base, "Potential duplicate of #{names.to_sentence}")
     end
   end
 

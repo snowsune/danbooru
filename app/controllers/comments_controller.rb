@@ -8,8 +8,6 @@ class CommentsController < ApplicationController
     redirect_to root_path
   end
 
-  rate_limit :create, rate: 1.0/1.minute, burst: 50
-
   def index
     params[:group_by] ||= "comment" if params[:search].present?
 
@@ -19,6 +17,16 @@ class CommentsController < ApplicationController
       index_for_post
     else
       index_by_post
+    end
+  end
+
+  def show
+    @comment = authorize Comment.find(params[:id])
+
+    respond_with(@comment) do |format|
+      format.html do
+        redirect_to post_path(@comment.post, anchor: "comment_#{@comment.id}")
+      end
     end
   end
 
@@ -33,47 +41,39 @@ class CommentsController < ApplicationController
     respond_with(@comment)
   end
 
-  def update
-    @comment = authorize Comment.find(params[:id])
-    @comment.update(permitted_attributes(@comment))
-    respond_with(@comment)
-  end
-
-  def create
-    @comment = authorize Comment.new(creator: CurrentUser.user, creator_ip_addr: request.remote_ip)
-    @comment.update(permitted_attributes(@comment))
-    flash[:notice] = @comment.valid? ? "Comment posted" : @comment.errors.full_messages.join("; ")
-    respond_with(@comment) do |format|
-      format.html do
-        redirect_back fallback_location: (@comment.post || comments_path)
-      end
-    end
-  end
-
   def edit
     @comment = authorize Comment.find(params[:id])
     respond_with(@comment)
   end
 
-  def show
-    @comment = authorize Comment.find(params[:id])
+  def create
+    @comment = authorize Comment.new(creator: CurrentUser.user, creator_ip_addr: request.remote_ip, **permitted_attributes(Comment))
+    @comment.save
 
-    respond_with(@comment) do |format|
+    respond_with(@comment, notice: "Comment posted") do |format|
       format.html do
-        redirect_to post_path(@comment.post, anchor: "comment_#{@comment.id}")
+        redirect_back fallback_location: @comment.post || comments_path
       end
     end
   end
 
+  def update
+    @comment = Comment.find(params[:id])
+    @comment.attributes = { updater: CurrentUser.user, **permitted_attributes(@comment) }
+    authorize(@comment).save
+
+    respond_with(@comment)
+  end
+
   def destroy
     @comment = authorize Comment.find(params[:id])
-    @comment.update(is_deleted: true)
+    @comment.soft_delete(updater: CurrentUser.user)
     respond_with(@comment)
   end
 
   def undelete
     @comment = authorize Comment.find(params[:id])
-    @comment.update(is_deleted: false)
+    @comment.undelete(updater: CurrentUser.user)
     respond_with(@comment)
   end
 
@@ -81,19 +81,20 @@ class CommentsController < ApplicationController
 
   def index_for_post
     @post = Post.find(params[:post_id])
-    @comments = @post.comments
-    render :action => "index_for_post"
+    @comments = authorize @post.comments
+    render action: "index_for_post"
   end
 
   def index_by_post
     @limit = params.fetch(:limit, 20)
     @posts = Post.where.not(last_comment_bumped_at: nil).user_tag_match(params[:tags]).reorder("last_comment_bumped_at DESC NULLS LAST").paginate(params[:page], limit: @limit, search_count: params[:search])
+    authorize @posts
 
     respond_with(@posts)
   end
 
   def index_by_comment
-    @comments = Comment.paginated_search(params)
+    @comments = authorize Comment.paginated_search(params)
 
     if request.format.atom?
       @comments = @comments.includes(:creator, post: [:media_asset])

@@ -2,7 +2,6 @@
 <% meta_description(DText.new(@forum_topic.original_post&.body).excerpt) %>
 
 <% atom_feed_tag(@forum_topic.title, forum_topic_url(@forum_topic.id, format: :atom)) %>
-<%= render_meta_links @forum_posts %>
 <%= render "secondary_links" %>
 
 <div id="c-forum-topics">
@@ -11,7 +10,7 @@
       <%= @forum_topic.title %>
 
       <% if @forum_topic.is_private? %>
-        <span class="level-topic">(<%= User.level_string(@forum_topic.min_level).downcase %>+ only)</span>
+        <span class="level-topic">(<%= @forum_topic.min_level.downcase %>+ only)</span>
       <% end %>
 
       <% if @forum_topic.is_deleted? %>
@@ -19,7 +18,7 @@
       <% end %>
     </h1>
 
-    <p class="fineprint">Posted under <%= link_to @forum_topic.category_name, forum_topics_path(:search => {:category_id => @forum_topic.category_id}) %></p>
+    <p class="fineprint">Posted under <%= link_to @forum_topic.category, forum_topics_path(search: { category_id: @forum_topic.category_id }) %></p>
 
     <% if @forum_topic.is_locked? %>
       <div class="notice">

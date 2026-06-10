@@ -1,4 +1,4 @@
-require 'test_helper'
+require "test_helper"
 
 class SearchableTest < ActiveSupport::TestCase
   context "#search method" do
@@ -102,6 +102,23 @@ class SearchableTest < ActiveSupport::TestCase
           assert_search_equals([], title_like: "foo\\\\bar")
         end
       end
+
+      context "with a normalization" do
+        subject { WikiPage }
+
+        should "not normalize the attribute when searching using operators" do
+          wp = create(:wiki_page, title: "foo_bar")
+
+          assert_search_equals([], title_like: "FOO_BAR")
+          assert_search_equals([], title_ilike: "foo bar")
+
+          assert_search_equals([wp], title_not_like: "* *")
+          assert_search_equals([wp], title_not_ilike: "* *")
+
+          assert_search_equals([], title_regex: "FOO_BAR")
+          assert_search_equals([wp], title_not_regex: ".* .*")
+        end
+      end
     end
 
     context "for a boolean attribute" do
@@ -119,11 +136,11 @@ class SearchableTest < ActiveSupport::TestCase
     end
 
     context "for an inet attribute" do
-      subject { UserSession }
+      subject { UserEvent }
 
       should "work" do
-        @us1 = create(:user_session, ip_addr: "10.0.0.1")
-        @us2 = create(:user_session, ip_addr: "11.0.0.1")
+        @us1 = create(:user_event, ip_addr: "10.0.0.1")
+        @us2 = create(:user_event, ip_addr: "11.0.0.1")
 
         assert_search_equals(@us1, ip_addr: "10.0.0.1")
         assert_search_equals(@us1, ip_addr: "10.0.0.1/24")
@@ -201,6 +218,15 @@ class SearchableTest < ActiveSupport::TestCase
       should "support multiple operators on the same attribute" do
         assert_search_equals(@wp1, other_names_include_any: "a1", other_name_count: 2)
         assert_search_equals(@wp2, other_names_include_any: "c3", other_name_count: 2)
+      end
+
+      context "with a normalization" do
+        should "not normalize the attribute when searching using operators" do
+          create(:wiki_page, other_names: ["foo_bar"])
+
+          assert_search_equals([], other_names_include_any: "foo bar")
+          assert_search_equals([], other_names_include_all: "foo bar")
+        end
       end
     end
 
@@ -312,6 +338,27 @@ class SearchableTest < ActiveSupport::TestCase
         @ai_tag2 = create(:ai_tag)
 
         assert_search_equals([@ai_tag1], post: { id: @post.id })
+      end
+    end
+
+    context "timestamps" do
+      should "work with relative times" do
+        freeze_time do
+          @post = create(:post, last_comment_bumped_at: 35.hours.ago)
+
+          assert_search_equals([@post], last_comment_bumped_at: "1d..2d")
+          assert_search_equals([@post], last_comment_bumped_at: "<1w")
+          assert_search_equals([], last_comment_bumped_at: ">3d")
+        end
+      end
+
+      should "work with absolute times" do
+        @post = create(:post, last_comment_bumped_at: "2026-02-01T01:23:45Z")
+
+        assert_search_equals([@post], last_comment_bumped_at: "..2026-02-03T00:00:00Z")
+        assert_search_equals([@post], last_comment_bumped_at: "2026-02-01T00:00:00Z..2026-02-02T00:00:00Z")
+        assert_search_equals([@post], last_comment_bumped_at: ">2026-02-01T00:00:00Z")
+        assert_search_equals([], last_comment_bumped_at: "<2026-02-01T00:00:00Z")
       end
     end
   end

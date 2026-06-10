@@ -12,6 +12,8 @@
 # @see https://www.rubydoc.info/gems/ffi-libarchive/0.4.2
 # @see https://github.com/libarchive/libarchive/wiki/ManualPages
 
+require "find"
+
 module Archive
   module C
     # XXX Monkey patch ffi-libarchive to add some functions we need.
@@ -19,6 +21,22 @@ module Archive
     attach_function_maybe :archive_format_name, [:pointer], :string
     attach_function_maybe :archive_filter_name, [:pointer, :int], :string
     attach_function_maybe :archive_filter_count, [:pointer], :int
+    attach_function_maybe :archive_write_set_option, [:pointer, :string, :string, :string], :int
+
+    # XXX: Hack to force 'Store' compression on zip archives.
+    class << self
+      module Extension
+        def archive_write_set_format(archive, format)
+          super
+
+          if format == FORMAT_ZIP
+            archive_write_set_option archive, "zip", "compression", "store"
+          end
+        end
+      end
+
+      prepend Extension
+    end
   end
 end
 
@@ -30,11 +48,13 @@ module Danbooru
     # @see https://www.freebsd.org/cgi/man.cgi?query=archive_write_disk&sektion=3&format=html
     DEFAULT_FLAGS =
       ::Archive::EXTRACT_NO_OVERWRITE |
-      #::Archive::EXTRACT_SECURE_NOABSOLUTEPATHS |
+      # ::Archive::EXTRACT_SECURE_NOABSOLUTEPATHS |
       ::Archive::EXTRACT_SECURE_SYMLINKS |
       ::Archive::EXTRACT_SECURE_NODOTDOT
 
     attr_reader :file
+
+    delegate :path, to: :file
 
     # Open an archive, or raise an error if the archive can't be opened. If given a block, pass the archive to the block
     # and close the archive after the block finishes.
@@ -43,7 +63,7 @@ module Danbooru
     # @yieldparam [Danbooru::Archive] The archive.
     # @return [Danbooru::Archive] The archive.
     def self.open!(filelike, &block)
-      file = filelike.is_a?(File) ? filelike : Kernel.open(filelike, binmode: true)
+      file = filelike.respond_to?(:path) ? filelike : Kernel.open(filelike, binmode: true)
       archive = new(file)
 
       if block_given?
@@ -55,9 +75,9 @@ module Danbooru
       else
         archive
       end
-    rescue => error
+    rescue StandardError => e
       archive&.close
-      raise Error, error
+      raise Error, e
     end
 
     # Open an archive, or return nil if the archive can't be opened. See `#open!` for details.
@@ -78,6 +98,14 @@ module Danbooru
       open!(filelike) do |archive|
         archive.extract!(directory, flags: flags, &block)
       end
+    end
+
+    def self.create!(directory, filelike = nil, &block)
+      filelike = Danbooru::Tempfile.new(["danbooru-archive-", ".zip"], binmode: true) if filelike.nil?
+      open!(filelike) do |archive|
+        archive.create!(directory)
+      end
+      open!(filelike, &block)
     end
 
     # @param file [File] The archive file.
@@ -149,6 +177,32 @@ module Danbooru
       end
     end
 
+    # Create an uncompressed ZIP archive from the contents of a specified directory. Overwrites existing file.
+
+    # @param directory [String] The directory that contains files to archive.
+    # @return [(String, Array<String>)] The path to the directory, and the list of extracted files in the directory.
+    def create!(directory)
+      ::Archive::Writer.open_filename(file.path, :none, :zip) do |archive|
+        Find.find(directory).lazy.map do |path|
+          Pathname.new path
+        end.select(&:file?).each do |pn|
+          archive.new_entry do |e|
+            e.pathname = pn.relative_path_from(directory).to_s.force_encoding("ASCII-8BIT")
+            e.size = pn.size
+            e.filetype = ::Archive::Entry::FILE
+            e.perm = 0644
+            archive.write_header e
+            File.open(pn) do |f|
+              until f.eof?
+                chunk = f.read ::Archive::C::DATA_BUFFER_SIZE
+                archive.write_data chunk
+              end
+            end
+          end
+        end
+      end
+    end
+
     # @return [Integer] The number of files in the archive.
     def file_count
       @file_count ||= entries.count
@@ -176,7 +230,7 @@ module Danbooru
     end
 
     # Print the archive contents in `ls -l` format.
-    def ls(io = STDOUT)
+    def ls(io = $stdout)
       io.puts(entries.map(&:ls).join("\n"))
     end
   end
@@ -184,6 +238,7 @@ module Danbooru
   # An entry represents a single file in an archive.
   class Entry
     attr_reader :archive, :entry
+
     delegate :directory?, :file?, :close, :pathname, :pathname=, :size, :strmode, :uid, :gid, :mtime, to: :entry
 
     # @param entry [::Archive] The archive the entry belongs to.
@@ -228,15 +283,15 @@ module Danbooru
 
     # @return [String] The archive entry format ("RAR", "ZIP", etc).
     def format
-      ::Archive::C::archive_format_name(archive_ffi_ptr)
+      ::Archive::C.archive_format_name(archive_ffi_ptr)
     end
 
     # @return [Array<String>] The list of filters for the entry.
     def filters
-      count = ::Archive::C::archive_filter_count(archive_ffi_ptr)
+      count = ::Archive::C.archive_filter_count(archive_ffi_ptr)
 
       count.times.map do |n|
-        ::Archive::C::archive_filter_name(archive_ffi_ptr, n)
+        ::Archive::C.archive_filter_name(archive_ffi_ptr, n)
       end
     end
 

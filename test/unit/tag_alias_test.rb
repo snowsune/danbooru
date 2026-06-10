@@ -1,12 +1,12 @@
-require 'test_helper'
+require "test_helper"
 
 class TagAliasTest < ActiveSupport::TestCase
   context "A tag alias" do
     setup do
-      @admin = FactoryBot.create(:admin_user)
+      @admin = create(:admin_user)
 
       travel_to(1.month.ago) do
-        user = FactoryBot.create(:user)
+        user = create(:user)
         CurrentUser.user = user
       end
     end
@@ -17,17 +17,20 @@ class TagAliasTest < ActiveSupport::TestCase
 
     context "on validation" do
       subject do
-        FactoryBot.create(:tag, :name => "aaa")
-        FactoryBot.create(:tag, :name => "bbb")
-        FactoryBot.create(:tag_alias, :antecedent_name => "aaa", :consequent_name => "bbb", :status => "active")
+        create(:tag, name: "aaa")
+        create(:tag, name: "bbb")
+        create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "active")
       end
 
-      should allow_value('active').for(:status)
-      should allow_value('deleted').for(:status)
+      should normalize_attribute(:antecedent_name).from(" FOO BAR ").to("foo_bar")
+      should normalize_attribute(:consequent_name).from(" FOO BAR ").to("foo_bar")
 
-      should_not allow_value('ACTIVE').for(:status)
-      should_not allow_value('error').for(:status)
-      should_not allow_value('derp').for(:status)
+      should allow_value("active").for(:status)
+      should allow_value("deleted").for(:status)
+
+      should_not allow_value("ACTIVE").for(:status)
+      should_not allow_value("error").for(:status)
+      should_not allow_value("derp").for(:status)
 
       should allow_value(nil).for(:forum_topic_id)
       should_not allow_value(-1).for(:forum_topic_id).with_message("must exist", against: :forum_topic)
@@ -39,10 +42,10 @@ class TagAliasTest < ActiveSupport::TestCase
       should_not allow_value(-1).for(:creator_id).with_message("must exist", against: :creator)
 
       should "not allow duplicate active aliases" do
-        ta1 = FactoryBot.create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "active")
-        ta2 = FactoryBot.create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "retired")
-        ta3 = FactoryBot.create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "deleted")
-        ta4 = FactoryBot.create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "deleted")
+        ta1 = create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "active")
+        ta2 = create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "retired")
+        ta3 = create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "deleted")
+        ta4 = create(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb", status: "deleted")
         [ta1, ta2, ta3, ta4].each { |ta| assert(ta.valid?) }
 
         ta4.update(status: "active")
@@ -103,6 +106,15 @@ class TagAliasTest < ActiveSupport::TestCase
         assert_equal("bbb 456", @ss4.reload.query)
         assert_equal("123 bbb", @ss5.reload.query)
       end
+
+      should "not fail if user has a saved search that is too long" do
+        ss = build(:saved_search, query: SavedSearch::MAX_TAGS.succ.times.map { |n| "tag#{n}" }.join(" "))
+        ss.save!(validate: false)
+
+        TagAlias.approve!(antecedent_name: "tag0", consequent_name: "new_tag", approver: @admin)
+
+        assert_equal(true, ss.reload.query.split.include?("new_tag"))
+      end
     end
 
     context "blacklists" do
@@ -125,11 +137,20 @@ class TagAliasTest < ActiveSupport::TestCase
         assert_equal("111 222\n\naaa 333", @u6.reload.blacklisted_tags)
         assert_equal("111 aaa\n222 333", @u7.reload.blacklisted_tags)
       end
+
+      should "not fail if the user has too many blacklisted tags" do
+        user = build(:user, blacklisted_tags: User::MAX_BLACKLIST_TAGS.succ.times.map { |n| "tag#{n}" }.join("\n"))
+        user.save!(validate: false)
+
+        TagAlias.approve!(antecedent_name: "tag0", consequent_name: "new_tag", approver: @admin)
+
+        assert_equal(true, user.reload.blacklisted_tags.split.include?("new_tag"))
+      end
     end
 
     should "update any affected posts when saved" do
-      post1 = FactoryBot.create(:post, :tag_string => "aaa bbb")
-      post2 = FactoryBot.create(:post, :tag_string => "ccc ddd")
+      post1 = create(:post, tag_string: "aaa bbb")
+      post2 = create(:post, tag_string: "ccc ddd")
 
       TagAlias.approve!(antecedent_name: "aaa", consequent_name: "ccc", approver: @admin)
 
@@ -140,9 +161,10 @@ class TagAliasTest < ActiveSupport::TestCase
     end
 
     should "not validate for transitive relations" do
-      ta1 = FactoryBot.create(:tag_alias, :antecedent_name => "bbb", :consequent_name => "ccc")
+      create(:tag_alias, antecedent_name: "bbb", consequent_name: "ccc")
+
       assert_difference("TagAlias.count", 0) do
-        ta2 = FactoryBot.build(:tag_alias, :antecedent_name => "aaa", :consequent_name => "bbb")
+        ta2 = build(:tag_alias, antecedent_name: "aaa", consequent_name: "bbb")
         ta2.save
         assert(ta2.errors.any?, "Tag alias should be invalid")
         assert_equal("bbb is already aliased to ccc", ta2.errors.full_messages.join)
@@ -206,12 +228,30 @@ class TagAliasTest < ActiveSupport::TestCase
         assert_equal("foo [[bbb]] bar", @wiki.reload.body)
       end
 
+      should "not fail to rewrite wikis if the wiki page is too long" do
+        @wiki = build(:wiki_page, body: "foo [[aaa]] bar #{"x" * WikiPage::MAX_WIKI_LENGTH}")
+        @wiki.save!(validate: false)
+
+        TagAlias.approve!(antecedent_name: "aaa", consequent_name: "bbb", approver: @admin)
+
+        assert_equal("foo [[bbb]] bar #{"x" * WikiPage::MAX_WIKI_LENGTH}", @wiki.reload.body)
+      end
+
       should "rewrite links in pool descriptions to use the new tag" do
         @pool = create(:pool, description: "foo [[aaa]] bar")
 
         TagAlias.approve!(antecedent_name: "aaa", consequent_name: "bbb", approver: @admin)
 
         assert_equal("foo [[bbb]] bar", @pool.reload.description)
+      end
+
+      should "not fail to rewrite pool descriptions if the pool description is too long" do
+        @pool = build(:pool, description: "foo [[aaa]] bar #{"x" * Pool::MAX_DESCRIPTION_LENGTH}")
+        @pool.save!(validate: false)
+
+        TagAlias.approve!(antecedent_name: "aaa", consequent_name: "bbb", approver: @admin)
+
+        assert_equal("foo [[bbb]] bar #{"x" * Pool::MAX_DESCRIPTION_LENGTH}", @pool.reload.description)
       end
     end
 
@@ -226,8 +266,8 @@ class TagAliasTest < ActiveSupport::TestCase
 
       should "merge existing artists if there is a conflict" do
         @tag = create(:tag, name: "aaa", category: Tag.categories.artist)
-        @artist1 = create(:artist, name: "aaa", group_name: "g_aaa", other_names: "111 222", url_string: "https://twitter.com/111\n-https://twitter.com/222")
-        @artist2 = create(:artist, name: "bbb", other_names: "111 333", url_string: "https://twitter.com/111\n-https://twitter.com/333\nhttps://twitter.com/444")
+        @artist1 = create(:artist, name: "aaa", group_name: "g_aaa", other_names: "111 222", url_string: "https://x.com/111\n-https://x.com/222")
+        @artist2 = create(:artist, name: "bbb", other_names: "111 333", url_string: "https://x.com/111\n-https://x.com/333\nhttps://x.com/444")
 
         TagAlias.approve!(antecedent_name: "aaa", consequent_name: "bbb", approver: @admin)
 
@@ -239,7 +279,7 @@ class TagAliasTest < ActiveSupport::TestCase
         assert_equal(false, @artist2.reload.is_deleted)
         assert_equal(%w[111 333 222 aaa], @artist2.other_names)
         assert_equal("g_aaa", @artist2.group_name)
-        assert_equal(%w[-https://twitter.com/222 -https://twitter.com/333 https://twitter.com/111 https://twitter.com/444], @artist2.url_array)
+        assert_equal(%w[-https://x.com/222 -https://x.com/333 https://x.com/111 https://x.com/444], @artist2.url_array)
       end
 
       should "move the is_banned flag from the old artist entry to the new artist entry" do
@@ -253,20 +293,20 @@ class TagAliasTest < ActiveSupport::TestCase
       end
 
       should "ignore the old artist if it has been deleted" do
-        @artist1 = create(:artist, name: "aaa", group_name: "g_aaa", other_names: "111 222", url_string: "https://twitter.com/111\n-https://twitter.com/222", is_deleted: true)
-        @artist2 = create(:artist, name: "bbb", other_names: "111 333", url_string: "https://twitter.com/111\n-https://twitter.com/333\nhttps://twitter.com/444")
+        @artist1 = create(:artist, name: "aaa", group_name: "g_aaa", other_names: "111 222", url_string: "https://x.com/111\n-https://x.com/222", is_deleted: true)
+        @artist2 = create(:artist, name: "bbb", other_names: "111 333", url_string: "https://x.com/111\n-https://x.com/333\nhttps://x.com/444")
 
         TagAlias.approve!(antecedent_name: "aaa", consequent_name: "bbb", approver: @admin)
 
         assert_equal(true, @artist1.reload.is_deleted)
         assert_equal(%w[111 222], @artist1.other_names)
         assert_equal("g_aaa", @artist1.group_name)
-        assert_equal(%w[-https://twitter.com/222 https://twitter.com/111], @artist1.url_array)
+        assert_equal(%w[-https://x.com/222 https://x.com/111], @artist1.url_array)
 
         assert_equal(false, @artist2.reload.is_deleted)
         assert_equal(%w[111 333], @artist2.other_names)
         assert_equal("", @artist2.group_name)
-        assert_equal(%w[-https://twitter.com/333 https://twitter.com/111 https://twitter.com/444], @artist2.url_array)
+        assert_equal(%w[-https://x.com/333 https://x.com/111 https://x.com/444], @artist2.url_array)
       end
     end
 

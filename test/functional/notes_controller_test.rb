@@ -1,4 +1,4 @@
-require 'test_helper'
+require "test_helper"
 
 class NotesControllerTest < ActionDispatch::IntegrationTest
   context "The notes controller" do
@@ -10,7 +10,7 @@ class NotesControllerTest < ActionDispatch::IntegrationTest
     context "index action" do
       setup do
         as(@user) do
-          @post_note = create(:note, post: build(:post, id: 2001, tag_string: "touhou"))
+          @post_note = create(:note, post: build(:post, tag_string: "touhou"))
           @deleted_note = create(:note, is_active: false)
         end
       end
@@ -20,14 +20,12 @@ class NotesControllerTest < ActionDispatch::IntegrationTest
         assert_response :success
       end
 
-      should respond_to_search({}).with { [@deleted_note, @post_note, @note] }
+      should respond_to_search.with { [@deleted_note, @post_note, @note] }
       should respond_to_search(body_matches: "000").with { @note }
       should respond_to_search(is_active: "true").with { [@post_note, @note] }
 
-      context "using includes" do
-        should respond_to_search(post_id: 2001).with { @post_note }
-        should respond_to_search(post_tags_match: "touhou").with { @post_note }
-      end
+      should respond_to_search(post_id: -> { @post_note.post_id }).with { @post_note }
+      should respond_to_search(post_tags_match: "touhou").with { @post_note }
     end
 
     context "show action" do
@@ -40,23 +38,33 @@ class NotesControllerTest < ActionDispatch::IntegrationTest
     context "create action" do
       should "create a note" do
         assert_difference("Note.count", 1) do
-          @post = create(:post)
-          post_auth notes_path, @user, params: {:note => {:x => 0, :y => 0, :width => 10, :height => 10, :body => "abc", :post_id => @post.id}, :format => :json}
+          post = create(:post)
+          post_auth notes_path, @user, params: { note: { x: 0, y: 0, width: 10, height: 10, body: "abc", post_id: post.id }, format: :json }
+
           assert_response :success
+          assert_equal(1, post.notes.count)
         end
+      end
+
+      should "not create a note on a post that cannot have notes" do
+        post = create(:post, file_ext: "webm")
+        post_auth notes_path, @user, params: { note: { x: 0, y: 0, width: 10, height: 10, body: "abc", post_id: post.id }, format: :json }
+
+        assert_response 422
+        assert_equal(0, post.notes.count)
       end
     end
 
     context "update action" do
       should "update a note" do
-        put_auth note_path(@note), @user, params: {:note => {:body => "xyz"}}
+        put_auth note_path(@note), @user, params: { note: { body: "xyz" }}
         assert_redirected_to @note
         assert_equal("xyz", @note.reload.body)
       end
 
       should "not allow changing the post id to another post" do
         @other = create(:post)
-        put_auth note_path(@note), @user, params: {:format => "json", :id => @note.id, :note => {:post_id => @other.id}}
+        put_auth note_path(@note), @user, params: { format: "json", id: @note.id, note: { post_id: @other.id }}
         assert_response 403
         assert_not_equal(@other.id, @note.reload.post_id)
       end
@@ -74,27 +82,50 @@ class NotesControllerTest < ActionDispatch::IntegrationTest
       setup do
         as(@user) do
           travel(1.day) do
-            @note.update(:body => "111")
+            @note.update(body: "111")
           end
           travel(2.days) do
-            @note.update(:body => "222")
+            @note.update(body: "222")
           end
         end
       end
 
       should "revert to a previous version" do
-        put_auth revert_note_path(@note), @user, params: {:version_id => @note.versions.first.id}
+        put_auth revert_note_path(@note), @user, params: { version_id: @note.versions.first.id }
         assert_redirected_to @note
         assert_equal("000", @note.reload.body)
       end
 
       should "not allow reverting to a previous version of another note" do
         as(@user) do
-          @note2 = create(:note, :body => "note 2")
+          @note2 = create(:note, body: "note 2")
         end
-        put_auth revert_note_path(@note), @user, params: { :version_id => @note2.versions.first.id }
+        put_auth revert_note_path(@note), @user, params: { version_id: @note2.versions.first.id }
         assert_not_equal(@note.reload.body, @note2.body)
         assert_response :missing
+      end
+    end
+
+    context "preview action" do
+      should "work for a POST method" do
+        post preview_notes_path, params: { body: '<p>test</p> <script>alert("owned")</script>', format: "json" }
+
+        assert_response :success
+        assert_equal("<p>test</p> ", response.parsed_body["sanitized_body"])
+      end
+
+      should "work for a GET method" do
+        get preview_notes_path, params: { body: '<p>test</p> <script>alert("owned")</script>', format: "json" }
+
+        assert_response :success
+        assert_equal("<p>test</p> ", response.parsed_body["sanitized_body"])
+      end
+
+      should "work for a missing body argument" do
+        post preview_notes_path, params: { format: "json" }
+        assert_response :success
+
+        assert_equal("", response.parsed_body["sanitized_body"])
       end
     end
   end

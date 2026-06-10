@@ -21,6 +21,13 @@
 
 module Source
   class URL::NicoSeiga < Source::URL
+    site "Nico Seiga" do
+      url "https://seiga.nicovideo.jp"
+      domains %w[nicovideo.jp nicoseiga.jp nicomanga.jp nimg.jp nico.ms]
+
+      credential :user_session, help: %{Your NicoSeiga `user_session` cookie.}
+    end
+
     attr_reader :illust_id, :manga_id, :image_id, :oekaki_id, :video_id, :user_id, :username, :profile_url
 
     def self.match?(url)
@@ -37,9 +44,11 @@ module Source
         @illust_id = $1
         @image_id = $1
 
-      # https://seiga.nicovideo.jp/watch/mg316708
-      # https://sp.seiga.nicovideo.jp/watch/mg316708
-      in /seiga$/, "nicovideo.jp", "watch", /^mg(\d+)/ => manga_id
+      # https://seiga.nicovideo.jp/watch/mg925907
+      # https://manga.nicovideo.jp/watch/mg925907
+      # https://sp.seiga.nicovideo.jp/watch/mg925907
+      # https://sp.manga.nicovideo.jp/watch/mg925907
+      in /(?:seiga|manga)$/, "nicovideo.jp", "watch", /^mg(\d+)/ => manga_id
         @manga_id = $1
 
       # See https://wiki.archiveteam.org/index.php/Niconico#Overview_of_Video_IDs
@@ -192,14 +201,18 @@ module Source
       if illust_id.present?
         "https://seiga.nicovideo.jp/seiga/im#{illust_id}"
       elsif manga_id.present?
-        "https://seiga.nicovideo.jp/watch/mg#{manga_id}"
+        "https://manga.nicovideo.jp/watch/mg#{manga_id}"
       elsif video_id.present?
         "https://www.nicovideo.jp/watch/#{video_id}"
       elsif oekaki_id.present?
         "https://dic.nicovideo.jp/oekaki_id/#{oekaki_id}"
+      end
       # elsif image_id.present?
       #   "https://seiga.nicovideo.jp/image/source/#{image_id}"
-      end
+    end
+
+    def secondary_url?
+      profile_url? && subdomain.in?(%w[www com dic])
     end
   end
 end

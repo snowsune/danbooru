@@ -1,16 +1,51 @@
 ENV["RAILS_ENV"] = "test"
 
-require 'simplecov'
-require_relative "../config/environment"
-require 'rails/test_help'
+# Enable coverage only when COVERAGE is set or when running the whole test suite with `bin/rails test`, not when running individual test files.
+if ENV["COVERAGE"].present?
+  require "simplecov"
+  require "simplecov-cobertura"
 
-Dir["#{Rails.root}/test/factories/*.rb"].sort.each { |file| require file }
-Dir["#{Rails.root}/test/test_helpers/*.rb"].sort.each { |file| require file }
+  # Silence `coverage data provided by Coverage exceeds number of lines` warnings in .erb files, which occur because ERB
+  # eval coverage can include synthetic wrapper lines that exceed source line count.
+  module SimpleCov
+    module SourceFileErbWarningPatch
+      def coverage_exceeding_source_warn
+        super unless filename.end_with?(".erb")
+      end
+    end
+  end
+
+  SimpleCov::SourceFile.prepend(SimpleCov::SourceFileErbWarningPatch)
+
+  SimpleCov.start "rails" do
+    add_group "Extractors", "app/logical/source"
+    add_group "Libraries", ["app/logical", "lib"]
+    add_group "Components", "app/components"
+    add_group "Policies", "app/policies"
+    add_group "Views", "app/views"
+
+    enable_coverage :branch
+    enable_coverage_for_eval
+
+    formatter SimpleCov::Formatter::MultiFormatter.new([
+      SimpleCov::Formatter::HTMLFormatter,      # tmp/coverage/index.html
+      SimpleCov::Formatter::CoberturaFormatter, # tmp/coverage/coverage.xml (used by codecov in .github/workflows/test.yaml)
+    ])
+
+    coverage_dir "tmp/coverage"
+  end
+end
+
+require_relative "../config/environment"
+require "rails/test_help"
+
+Rails.root.glob("test/factories/*.rb").each { |file| require file }
+Rails.root.glob("test/test_helpers/*.rb").each { |file| require file }
 
 Minitest::Reporters.use!([
   Minitest::Reporters::ProgressReporter.new,
   Minitest::Reporters::HtmlReporter.new(reports_dir: "tmp/html-test-results"),
-  Minitest::Reporters::JUnitReporter.new("tmp/junit-test-results")
+  Minitest::Reporters::JUnitReporter.new("tmp/junit-test-results"),
 ])
 
 Shoulda::Matchers.configure do |config|
@@ -27,13 +62,13 @@ class ActiveSupport::TestCase
   include FactoryBot::Syntax::Methods
   extend PostArchiveTestHelper
   extend PoolArchiveTestHelper
-  include ReportbooruHelper
   include AutotaggerHelper
+  include BulkUpdateRequestTestHelper
   include DatabaseTestHelper
   include IqdbTestHelper
+  include ReportbooruHelper
   include UploadTestHelper
-  include SourceTestHelper
-  extend StripeTestHelper
+  include UrlTestHelper
   extend NormalizeAttributeHelper
 
   mock_post_version_service!
@@ -44,12 +79,16 @@ class ActiveSupport::TestCase
     parallelize_setup do |worker|
       Rails.application.load_seed
 
-      SimpleCov.command_name "#{SimpleCov.command_name}-#{worker}"
+      if defined?(SimpleCov)
+        SimpleCov.command_name "#{SimpleCov.command_name}-#{worker}"
+      end
     end
   end
 
-  parallelize_teardown do |worker|
-    SimpleCov.result
+  parallelize_teardown do
+    if defined?(SimpleCov)
+      SimpleCov.result
+    end
   end
 
   setup do
@@ -93,10 +132,19 @@ class ActionDispatch::IntegrationTest
   register_encoder :html, response_parser: ->(body) { Nokogiri.HTML5(body) }
 
   def login_as(user)
-    post session_path, params: { session: { name: user.name, password: user.password } }
+    return if user.nil? || user.is_anonymous?
+    current_user_id = request&.session&.dig(:user_id)
+
+    if current_user_id == user.id
+      return
+    elsif current_user_id.present? && current_user_id != user.id
+      delete session_path # logout
+    end
+
+    post session_path, params: { session: { name: user.name, password: user.password }}
 
     if user.totp.present?
-      post verify_totp_session_path, params: { totp: { user_id: user.signed_id(purpose: :verify_totp), code: user.totp.code } }
+      post verify_totp_session_path, params: { totp: { user_id: user.signed_id(purpose: :verify_totp), code: user.totp.code }}
     end
   end
 
@@ -119,5 +167,15 @@ class ActionDispatch::IntegrationTest
 
   def delete_auth(url, user, **options)
     method_authenticated(:delete, url, user, **options)
+  end
+end
+
+module Source::Tests; end
+
+class ActiveSupport::ExtractorTestCase < ActiveSupport::TestCase
+  include ExtractorTestHelper
+
+  setup do
+    skip "Skipping extractor tests as configured by the environment." if ENV["DANBOORU_SKIP_EXTRACTOR_TESTS"].to_s.truthy?
   end
 end

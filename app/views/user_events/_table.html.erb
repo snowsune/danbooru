@@ -1,9 +1,11 @@
 <div id="p-table-listing">
   <% if @user.present? %>
-    <h1 class="mb-4">Account History</h1>
+    <h1 class="mb-2">Account History: <%= link_to_user @user %></h1>
   <% else %>
-    <h1 class="mb-4">User Events</h1>
+    <h1 class="mb-2">User Events</h1>
   <% end %>
+
+  <%= render "users/sockpuppets", user: @user %>
 
   <%= search_form_for(user_events_path) do |f| %>
     <%= f.input :user_name, label: "User", input_html: { value: params[:search][:user_name], "data-autocomplete": "user" } %>
@@ -40,6 +42,10 @@
       <% case user_event.category %>
       <% when "login" %>
         Logged in.
+      <% when "login_pending_verification" %>
+        Tried to login from a new location. Awaiting verification.
+      <% when "login_verification" %>
+        Verified a new login location.
       <% when "reauthenticate" %>
         Reauthenticated.
       <% when "failed_login" %>
@@ -84,6 +90,12 @@
         Logged in with a backup code.
       <% when "backup_code_reauthenticate" %>
         Reauthenticated with a backup code.
+      <% when "api_key_create" %>
+        Created a new API key.
+      <% when "api_key_update" %>
+        Updated an API key.
+      <% when "api_key_delete" %>
+        Deleted an API key.
       <% end %>
     <% end %>
 
@@ -97,9 +109,18 @@
       <% end %>
 
       <% t.column "Browser" do |user_event| %>
-        <% if user_event.parsed_user_agent.name.present? %>
+        <div>
+          <% if user_event.parsed_user_agent.product_version.present? %>
+            <%= link_to user_event.parsed_user_agent.product_version, current_page_path(search: search_params.deep_merge(user_agent_ilike: "*#{user_event.parsed_user_agent.full_product_version}*", user_agent: nil), page: nil), title: user_event.user_agent %>
+          <% end %>
+          <%= link_to "»", current_page_path(search: { user_agent: user_event.user_agent, user_agent_ilike: nil }, page: nil) %>
+        </div>
+      <% end %>
+
+      <% t.column "OS" do |user_event| %>
+        <% if user_event.parsed_user_agent.os.present? %>
           <div>
-            <%= link_to user_event.parsed_user_agent.name.capitalize, current_page_path(search: search_params.deep_merge(user_agent_ilike: "*#{user_event.parsed_user_agent.name}*"), page: nil), title: user_event.user_agent %>
+            <%= link_to user_event.parsed_user_agent.os, current_page_path(search: search_params.deep_merge(user_agent_ilike: "*#{user_event.parsed_user_agent.platform}*", user_agent: nil), page: nil), title: user_event.user_agent %>
           </div>
         <% end %>
       <% end %>
@@ -115,7 +136,7 @@
     <% end %>
 
     <% t.column "IP Address" do |user_event| %>
-      <div class="flex items-center gap-1">
+      <div class="flex items-center gap-1 leading-none">
         <% ip_addr = user_event.ip_addr %>
 
         <% if IpAddressPolicy.new(CurrentUser.user, ip_addr).show? && (user_event.ip_geolocation&.is_proxy? || ip_addr.is_tor?) %>

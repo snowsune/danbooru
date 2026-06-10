@@ -41,7 +41,7 @@ def populate_users(n, password: DEFAULT_PASSWORD)
   end
 end
 
-def populate_posts(n, search: "rating:s", batch_size: 200, timeout: 30.seconds)
+def populate_posts(n, search: "is:sfw", batch_size: 200, timeout: 30.seconds)
   Rails.logger.info "*** Creating posts ***"
 
   # Generate posts in batches of 200 (by default)
@@ -54,7 +54,17 @@ def populate_posts(n, search: "rating:s", batch_size: 200, timeout: 30.seconds)
         upload = Upload.create(uploader: user, source: danbooru_post["file_url"])
         sleep 1 until upload.reload.is_finished? # wait for the job worker to process the upload in the background
 
-        post = Post.new_from_upload(upload.upload_media_assets.first, tag_string: danbooru_post["tag_string"], source: danbooru_post["source"], rating: danbooru_post["rating"])
+        prepared_tag_string = danbooru_post["tag_string_general"]
+        ["artist", "character", "copyright", "meta"].each do |category|
+          prepared_tag_string << (" " + danbooru_post["tag_string_#{category}"].split.map { |tag| "#{category}:#{tag}"}.join(" "))
+        end
+
+        post = Post.new_from_upload(
+          upload.upload_media_assets.first,
+          tag_string: prepared_tag_string,
+          source: danbooru_post["source"],
+          rating: danbooru_post["rating"],
+        )
         post.save
 
         Rails.logger.info "Created post ##{post.id}"
@@ -95,12 +105,12 @@ def populate_notes(n)
   n.times do
     user = User.order("random()").first
     post = Post.order("random()").first
-    x = rand(post.image_width).clamp(0..post.image_width - 100)
-    y = rand(post.image_height).clamp(0..post.image_height - 100)
+    x = rand(post.image_width).clamp(0..(post.image_width - 100))
+    y = rand(post.image_height).clamp(0..(post.image_height - 100))
     w = rand(post.image_width - x).clamp(100..post.image_width)
     h = rand(post.image_height - y).clamp(100..post.image_height)
 
-    note = Note.create(post: post, x: x, y: y, width: w, height: h, body: Faker::Lorem.paragraph)
+    note = Note.create(post: post, user: user, x: x, y: y, width: w, height: h, body: Faker::Lorem.paragraph)
 
     Rails.logger.info "Created note ##{note.id}"
   end

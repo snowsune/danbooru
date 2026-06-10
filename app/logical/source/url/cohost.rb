@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
-# @see Source::Extractor::Cohost
 class Source::URL::Cohost < Source::URL
+  site "Cohost", url: "https://cohost.org", domains: %w[cohost.org cohostcdn.org]
+
   RESERVED_USERNAMES = %w[rc static]
 
   attr_reader :full_image_url, :username, :post_id, :title, :slug

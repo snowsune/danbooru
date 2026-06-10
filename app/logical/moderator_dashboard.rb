@@ -12,12 +12,12 @@ class ModeratorDashboard
     ArtistVersion
       .joins(:updater)
       .where("artist_versions.created_at > ?", min_date)
-      .where("users.level <= ?", max_level)
+      .where(users: { level: ..max_level })
       .group(:updater)
       .order(Arel.sql("count(*) desc"))
       .limit(10)
       .count
-      .map { |user, count| OpenStruct.new(user: user, count: count) }
+      .to_h
   end
 
   def comments
@@ -25,56 +25,56 @@ class ModeratorDashboard
       .joins(comment: [:creator])
       .where("comments.score < 0")
       .where("comment_votes.created_at > ?", min_date)
-      .where("users.level <= ?", max_level)
+      .where(users: { level: ..max_level })
       .group(:comment)
       .having("count(*) >= 3")
       .order(Arel.sql("count(*) desc"))
       .limit(10)
       .count
-      .map { |comment, count| OpenStruct.new(comment: comment, count: count) }
+      .to_h
   end
 
   def mod_actions
-    ModAction.visible(CurrentUser.user).includes(:creator).order("id desc").limit(10)
+    ModAction.visible(CurrentUser.user).includes(:creator).order(id: :desc).limit(10)
   end
 
   def notes
     NoteVersion
       .joins(:updater)
       .where("note_versions.created_at > ?", min_date)
-      .where("users.level <= ?", max_level)
+      .where(users: { level: ..max_level })
       .group(:updater)
       .order(Arel.sql("count(*) desc"))
       .limit(10)
       .count
-      .map { |user, count| OpenStruct.new(user: user, count: count) }
+      .to_h
   end
 
   def posts
     ::Post
       .joins(:uploader)
       .where("posts.created_at > ?", min_date)
-      .where("users.level <= ?", max_level)
+      .where(users: { level: ..max_level })
       .group(:uploader)
       .order(Arel.sql("count(*) desc"))
       .limit(10)
       .count
-      .map { |user, count| OpenStruct.new(user: user, count: count) }
+      .to_h
   end
 
   def user_feedbacks
-    UserFeedback.visible(CurrentUser.user).includes(:user).order("id desc").limit(10)
+    UserFeedback.visible(CurrentUser.user).includes(:user).order(id: :desc).limit(10)
   end
 
   def wiki_pages
     WikiPageVersion
       .joins(:updater)
       .where("wiki_page_versions.created_at > ?", min_date)
-      .where("users.level <= ?", max_level)
+      .where(users: { level: ..max_level })
       .group(:updater)
       .order(Arel.sql("count(*) desc"))
       .limit(10)
       .count
-      .map { |user, count| OpenStruct.new(user: user, count: count) }
+      .to_h
   end
 end

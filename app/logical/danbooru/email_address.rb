@@ -265,18 +265,18 @@ module Danbooru
     def self.correct(address)
       address = address.gsub(/[[:space:]]+/, " ").strip
 
-      address = address.gsub(/[\\\/]$/, '') # @qq.com\ -> @qq.com, @web.de/ -> @web.de
-      #address = address.gsub(/,/, ".") # foo,bar@gmail.com -> foo.bar@gmail.com | @gmail,com -> @gmail.com
-      address = address.gsub(/^https?:\/\/(www\.)?/i, "") # https://xxx@gmail.com -> xxx@gmail.com
+      address = address.gsub(%r{[\\/]$}, "") # @qq.com\ -> @qq.com, @web.de/ -> @web.de
+      # address = address.gsub(/,/, ".") # foo,bar@gmail.com -> foo.bar@gmail.com | @gmail,com -> @gmail.com
+      address = address.gsub(%r{^https?://(www\.)?}i, "") # https://xxx@gmail.com -> xxx@gmail.com
       address = address.gsub(/^mailto:/i, "") # mailto:foo@gmail.com -> foo@gmail.com
       address = address.gsub(/.* <(.*)>$/, '\1') # foo <bar@gmail.com> -> bar@gmail.com
       address = address.gsub(/@\./, "@") # @.gmail.com -> @gmail.com
       address = address.gsub(/\.+@/, "@") # foo..@gmail.com -> foo@gmail.com
       address = address.gsub(/@com$/i, ".com") # @gmail@com -> @gmail.com
-      address = address.gsub(/\.co,$/i, '.com') # @gmail.co, -> @gmail.com
-      address = address.gsub(/\.com.$/i, '.com') # @gmail.com, -> @gmail.com
-      address = address.gsub(/\.con$/i, '.com') # @gmail.con -> @gmail.com
-      address = address.gsub(/\.\.com$/i, '.com') # @gmail..com -> @gmail.com
+      address = address.gsub(/\.co,$/i, ".com") # @gmail.co, -> @gmail.com
+      address = address.gsub(/\.com.$/i, ".com") # @gmail.com, -> @gmail.com
+      address = address.gsub(/\.con$/i, ".com") # @gmail.con -> @gmail.com
+      address = address.gsub(/\.\.com$/i, ".com") # @gmail..com -> @gmail.com
 
       # @gmail -> @gmail.com
       address = address.gsub(/@gmai$/i, "@gmail.com")
@@ -335,14 +335,13 @@ module Danbooru
       #
       # @param from_address [String] The from address to use when connecting to the mail server.
       # @param timeout [Integer] The network timeout when connecting to the mail server.
-      # @param allow_smtp [Boolean] If true, check if the mail server responds to the RCPT TO command. Disabled by default because many ISPs and server providers block port 25.
       # @return [Boolean] True if the email address is definitely undeliverable. False if the address is eligible for delivery. Delivery could
       #   still fail if the mailbox doesn't exist and the server lied to the RCPT TO command.
-      def undeliverable?(from_address: Danbooru.config.contact_email, timeout: 3, allow_smtp: false)
+      def undeliverable?(from_address: Danbooru.config.contact_email, timeout: 3)
         mail_server = mx_domain(timeout: timeout)
         return true if mail_server.blank?
 
-        return false if !allow_smtp
+        return false if !smtp_enabled?
         smtp = Net::SMTP.new(mail_server)
         smtp.read_timeout = timeout
         smtp.open_timeout = timeout
@@ -374,6 +373,12 @@ module Danbooru
         response.exchange.to_s
       rescue Resolv::ResolvError
         nil
+      end
+
+      # True if we're allowed to make SMTP connections. Most residential ISP and VPS providers block SMTP connections by
+      # default, so we only consider SMTP enabled if an email provider has been explicitly configured.
+      def smtp_enabled?
+        Rails.application.config.action_mailer.smtp_settings.present?
       end
     end
 

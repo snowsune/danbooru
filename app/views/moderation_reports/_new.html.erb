@@ -1,14 +1,9 @@
 <div class="report-dialog-body">
-  <% if @moderation_report.model_type == "MediaAsset" %>
-    <%= embed_wiki("help:media_asset_report_notice") %>
-  <% else %>
-    <%= embed_wiki("help:report_notice") %>
-  <% end %>
+  <%= embed_wiki("help:report_notice") %>
 
   <%= edit_form_for(moderation_report, format: :js, remote: true) do |f| %>
     <%= f.hidden_field :model_type %>
     <%= f.hidden_field :model_id %>
-    <%= f.input :reason, as: :dtext, inline: true %>
-    <%= dtext_preview_button "moderation_report_reason" %>
+    <%= f.input :reason, as: :dtext, inline: true, input_html: { autofocus: true } %>
   <% end %>
 </div>

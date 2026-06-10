@@ -3,25 +3,28 @@
 class WikiPage < ApplicationRecord
   class RevertError < StandardError; end
 
-  META_WIKIS = ["list_of_", "tag_group:", "pool_group:", "howto:", "about:", "help:", "template:","api:"]
+  META_WIKIS = ["list_of_", "tag_group:", "pool_group:", "howto:", "about:", "help:", "template:", "api:"]
+  MAX_WIKI_LENGTH = 80_000
 
   after_save :create_version
 
-  normalize :title, :normalize_title
-  normalize :body, :normalize_text
-  normalize :other_names, :normalize_other_names
+  normalizes :title, with: ->(title) { WikiPage.normalize_title(title) }
+
+  normalizes :other_names, with: ->(other_names) { WikiPage.normalize_other_names(other_names) }
 
   array_attribute :other_names # XXX must come after `normalize :other_names`
   dtext_attribute :body, media_embeds: true # defines :dtext_body
 
   validates :title, tag_name: true, presence: true, uniqueness: true, if: :title_changed?
   validates :body, visible_string: true, unless: -> { is_deleted? || other_names.present? }
+  validates :body, length: { maximum: MAX_WIKI_LENGTH }, if: :body_changed?
+  validates :other_names, length: { maximum: 80, too_long: "can't have more than 80 names" }, if: :other_names_changed?
   validate :validate_rename
-  validate :validate_other_names
+  validate :validate_other_names, if: :other_names_changed?
 
-  has_one :tag, :foreign_key => "name", :primary_key => "title"
+  has_one :tag, foreign_key: "name", primary_key: "title"
   has_one :artist, -> { active }, foreign_key: "name", primary_key: "title"
-  has_many :versions, -> {order("wiki_page_versions.id ASC")}, :class_name => "WikiPageVersion", :dependent => :destroy
+  has_many :versions, -> { order("wiki_page_versions.id ASC") }, class_name: "WikiPageVersion", dependent: :destroy
 
   deletable
   has_dtext_links :body
@@ -75,7 +78,7 @@ class WikiPage < ApplicationRecord
     end
 
     def search(params, current_user)
-      q = search_attributes(params, [:id, :created_at, :updated_at, :is_locked, :is_deleted, :body, :title, :other_names, :tag, :artist, :dtext_links], current_user: current_user)
+      q = search_attributes(params, %i[id created_at updated_at is_locked is_deleted body title other_names tag artist dtext_links], current_user: current_user)
       q = q.where_text_matches([:title, :body], params[:title_or_body_matches])
 
       if params[:title_normalize].present?
@@ -152,6 +155,10 @@ class WikiPage < ApplicationRecord
     if other_names.present? && tag&.artist?
       errors.add(:base, "An artist wiki can't have other names")
     end
+
+    if other_names.any? { |name| name.length > 100 }
+      errors.add(:other_names, "can't have names more than 100 characters long")
+    end
   end
 
   def revert_to(version)
@@ -175,7 +182,7 @@ class WikiPage < ApplicationRecord
   end
 
   def self.normalize_other_names(other_names)
-    other_names.map { |name| normalize_other_name(name) }.uniq.reject(&:blank?)
+    other_names.map { |name| normalize_other_name(name) }.uniq.compact_blank
   end
 
   def self.normalize_other_name(name)
@@ -210,12 +217,12 @@ class WikiPage < ApplicationRecord
 
   def create_new_version
     versions.create(
-      :updater_id => CurrentUser.id,
-      :title => title,
-      :body => body,
-      :is_locked => is_locked,
-      :is_deleted => is_deleted,
-      :other_names => other_names
+      updater_id: CurrentUser.id,
+      title: title,
+      body: body,
+      is_locked: is_locked,
+      is_deleted: is_deleted,
+      other_names: other_names,
     )
   end
 
@@ -237,7 +244,8 @@ class WikiPage < ApplicationRecord
   def self.rewrite_wiki_links!(old_name, new_name)
     WikiPage.linked_to(old_name).each do |wiki|
       wiki.with_lock do
-        wiki.update!(body: DText.new(wiki.body).rewrite_wiki_links(old_name, new_name).to_s)
+        wiki.body = DText.new(wiki.body).rewrite_wiki_links(old_name, new_name).to_s
+        wiki.save!(validate: false)
       end
     end
   end

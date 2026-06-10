@@ -1,4 +1,4 @@
-require 'test_helper'
+require "test_helper"
 
 class PostVersionsControllerTest < ActionDispatch::IntegrationTest
   setup do
@@ -14,9 +14,6 @@ class PostVersionsControllerTest < ActionDispatch::IntegrationTest
 
   context "The post versions controller" do
     context "index action" do
-      setup do
-      end
-
       should "list all versions" do
         get_auth post_versions_path, @user
         assert_response :success
@@ -26,24 +23,24 @@ class PostVersionsControllerTest < ActionDispatch::IntegrationTest
       end
 
       should "list all versions that match the search criteria" do
-        get_auth post_versions_path, @user, params: {:search => {:post_id => @post.id}}
+        get_auth post_versions_path, @user, params: { search: { post_id: @post.id }}
         assert_response :success
         assert_select "#post-version-#{@post2.versions[0].id}", false
       end
 
       should "list all versions for search[changed_tags]" do
-        get post_versions_path, as: :json, params: { search: { changed_tags: "1" }}
+        get post_versions_path(search: { changed_tags: "1" }), as: :json
         assert_response :success
         assert_equal @post.versions[1].id, response.parsed_body[1]["id"].to_i
         assert_equal @post.versions[2].id, response.parsed_body[0]["id"].to_i
 
-        get post_versions_path, as: :json, params: { search: { changed_tags: "1 2" }}
+        get post_versions_path(search: { changed_tags: "1 2" }), as: :json
         assert_response :success
         assert_equal @post.versions[1].id, response.parsed_body[0]["id"].to_i
       end
 
       should "list all versions for search[tag_matches]" do
-        get post_versions_path, as: :json, params: { search: { tag_matches: "tagme" }}
+        get post_versions_path(search: { tag_matches: "tagme" }), as: :json
         assert_response :success
         assert_equal @post.versions[0].id, response.parsed_body[0]["id"].to_i
         assert_equal 1, response.parsed_body.length

@@ -1,18 +1,14 @@
 # frozen_string_literal: true
 
 class ForumPost < ApplicationRecord
-  MAX_IMAGES = 1
-  MAX_VIDEO_SIZE = 1.megabyte
-  MAX_LARGE_EMOJI = 1
-  MAX_SMALL_EMOJI = 100
-
   # attr_readonly :topic_id # XXX broken by accepts_nested_attributes_for in ForumTopic
   attr_accessor :creator_ip_addr
 
-  dtext_attribute :body, media_embeds: true # defines :dtext_body
+  # defines :dtext_body
+  dtext_attribute :body, media_embeds: { max_embeds: 5, max_large_emojis: 5, max_small_emojis: 100, max_video_size: 1.megabyte, sfw_only: true }
 
   belongs_to :creator, class_name: "User"
-  belongs_to_updater
+  belongs_to :updater, class_name: "User", default: -> { creator }
   belongs_to :topic, class_name: "ForumTopic", inverse_of: :forum_posts
 
   has_many :moderation_reports, as: :model
@@ -27,7 +23,6 @@ class ForumPost < ApplicationRecord
   validates :body, visible_string: true, length: { maximum: 200_000 }, if: :body_changed?
   validate :validate_deletion_of_original_post
   validate :validate_undeletion_of_post
-  validate :validate_body
 
   before_create :autoreport_spam
   before_save :handle_reports_on_deletion
@@ -41,17 +36,29 @@ class ForumPost < ApplicationRecord
   has_dtext_links :body
   mentionable(
     message_field: :body,
-    title: ->(_user_name) {%{#{creator.name} mentioned you in topic ##{topic_id} (#{topic.title})}},
-    body: ->(user_name) {%{@#{creator.name} mentioned you in topic ##{topic_id} ("#{topic.title}":[#{Routes.forum_topic_path(topic, page: forum_topic_page)}]):\n\n[quote]\n#{DText.new(body).extract_mention("@#{user_name}")}\n[/quote]\n}}
+    title: ->(_user_name) { %{#{creator.name} mentioned you in topic ##{topic_id} (#{topic.title})} },
+    body: lambda { |user_name|
+      <<~EOF
+        @#{creator.name} mentioned you in forum ##{id} ("#{topic.title}":[#{Routes.forum_topic_path(topic, page: forum_topic_page)}]). This is an excerpt from the message:
+
+        [quote]
+        #{DText.new(body).extract_mention("@#{user_name}")}
+        [/quote]
+      EOF
+    },
   )
 
   module SearchMethods
     def visible(user)
-      where(topic_id: ForumTopic.visible(user))
+      if policy(user).show_deleted?
+        where(topic_id: ForumTopic.visible(user))
+      else
+        undeleted.where(topic_id: ForumTopic.visible(user))
+      end
     end
 
     def not_visible(user)
-      where.not(topic_id: ForumTopic.visible(user))
+      visible(user).invert_where
     end
 
     def wiki_link_matches(title)
@@ -62,7 +69,7 @@ class ForumPost < ApplicationRecord
     end
 
     def search(params, current_user)
-      q = search_attributes(params, [:id, :created_at, :updated_at, :is_deleted, :body, :creator, :updater, :topic, :dtext_links, :votes, :tag_alias, :tag_implication, :bulk_update_request], current_user: current_user)
+      q = search_attributes(params, %i[id created_at updated_at is_deleted body creator updater topic dtext_links votes tag_alias tag_implication bulk_update_request], current_user: current_user)
 
       if params[:linked_to].present?
         q = q.wiki_link_matches(params[:linked_to])
@@ -76,7 +83,7 @@ class ForumPost < ApplicationRecord
 
   def self.new_reply(params)
     if params[:topic_id]
-      new(:topic_id => params[:topic_id])
+      new(topic_id: params[:topic_id])
     elsif params[:post_id]
       forum_post = ForumPost.find(params[:post_id])
       forum_post.build_response
@@ -101,33 +108,6 @@ class ForumPost < ApplicationRecord
     end
   end
 
-  def validate_body
-    if dtext_body.block_emoji_names.count > MAX_LARGE_EMOJI
-      errors.add(:base, "Can't include more than #{MAX_LARGE_EMOJI} #{"sticker".pluralize(MAX_LARGE_EMOJI)}")
-    end
-
-    if dtext_body.inline_emoji_names.count > MAX_SMALL_EMOJI
-      errors.add(:base, "Can't include more than #{MAX_SMALL_EMOJI} #{"emoji".pluralize(MAX_SMALL_EMOJI)}")
-    end
-
-    if dtext_body.embedded_media.count > MAX_IMAGES
-      errors.add(:base, "Can't include more than #{MAX_IMAGES} #{"image".pluralize(MAX_IMAGES)}")
-      return # don't check the actual images if the user included too many images
-    end
-
-    if dtext_body.embedded_posts.any? { _1.is_video? && _1.file_size > MAX_VIDEO_SIZE } || dtext_body.embedded_media_assets.any? { _1.is_video? && _1.file_size > MAX_VIDEO_SIZE }
-      errors.add(:base, "Can't include videos larger than #{MAX_VIDEO_SIZE.to_fs(:human_size)}")
-    end
-
-    if dtext_body.embedded_posts.any? { |embedded_post| embedded_post.rating != "g" }
-      errors.add(:base, "Can't post non-rating:G images")
-    end
-
-    if dtext_body.embedded_media_assets.any? { |embedded_asset| embedded_asset.ai_rating.first.in?(%w[q e]) }
-      errors.add(:base, "Can't post non-rating:G images")
-    end
-  end
-
   def autoreport_spam
     if SpamDetector.new(self, user_ip: creator_ip_addr).spam?
       moderation_reports << ModerationReport.new(creator: User.system, reason: "Spam.")
@@ -137,7 +117,7 @@ class ForumPost < ApplicationRecord
   def update_topic_updated_at_on_create
     if topic
       # need to do this to bypass the topic's original post from getting touched
-      ForumTopic.where(:id => topic.id).update_all(["updater_id = ?, response_count = response_count + 1, updated_at = ?", creator.id, Time.now])
+      ForumTopic.where(id: topic.id).update_all(["updater_id = ?, response_count = response_count + 1, updated_at = ?", creator.id, Time.now])
       topic.response_count += 1
     end
   end
@@ -148,35 +128,35 @@ class ForumPost < ApplicationRecord
     end
   end
 
-  def delete!
-    update(is_deleted: true)
+  def delete!(updater = CurrentUser.user)
+    update(is_deleted: true, updater: updater)
     update_topic_updated_at_on_delete
   end
 
-  def undelete!
-    update(is_deleted: false)
+  def undelete!(updater = CurrentUser.user)
+    update(is_deleted: false, updater: updater)
     update_topic_updated_at_on_undelete
   end
 
   def update_topic_updated_at_on_delete
     max = ForumPost.where(topic_id: topic.id, is_deleted: false).order(updated_at: :desc).first
     if max
-      ForumTopic.where(:id => topic.id).update_all(["updated_at = ?, updater_id = ?", max.updated_at, max.updater_id])
+      ForumTopic.where(id: topic.id).update_all(["updated_at = ?, updater_id = ?", max.updated_at, max.updater_id])
     end
   end
 
   def update_topic_updated_at_on_undelete
     if topic
-      ForumTopic.where(:id => topic.id).update_all(["updater_id = ?, updated_at = ?", CurrentUser.id, Time.now])
+      ForumTopic.where(id: topic.id).update_all(["updater_id = ?, updated_at = ?", CurrentUser.id, Time.now])
     end
   end
 
   def update_topic_updated_at_on_destroy
     max = ForumPost.where(topic_id: topic.id, is_deleted: false).order(updated_at: :desc).first
     if max
-      ForumTopic.where(:id => topic.id).update_all(["response_count = response_count - 1, updated_at = ?, updater_id = ?", max.updated_at, max.updater_id])
+      ForumTopic.where(id: topic.id).update_all(["response_count = response_count - 1, updated_at = ?, updater_id = ?", max.updated_at, max.updater_id])
     else
-      ForumTopic.where(:id => topic.id).update_all("response_count = response_count - 1")
+      ForumTopic.where(id: topic.id).update_all("response_count = response_count - 1")
     end
 
     topic.response_count -= 1
@@ -191,7 +171,7 @@ class ForumPost < ApplicationRecord
   end
 
   def quoted_response
-    DText.new(body).quote(creator.name)
+    DText.new(body).quote(self)
   end
 
   def forum_topic_page
@@ -223,7 +203,7 @@ class ForumPost < ApplicationRecord
 
   def build_response
     dup.tap do |x|
-      x.body = x.quoted_response
+      x.body = quoted_response
     end
   end
 

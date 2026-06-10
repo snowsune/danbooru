@@ -3,7 +3,7 @@
 class Source::Extractor
   class Fantia < Source::Extractor
     def self.enabled?
-      Danbooru.config.fantia_session_id.present?
+      SiteCredential.for_site("Fantia").present?
     end
 
     def image_urls
@@ -77,7 +77,7 @@ class Source::Extractor
       end
     end
 
-    def artist_name
+    def display_name
       case work_type
       when "post"
         api_response&.dig("post", "fanclub", "creator_name")
@@ -112,12 +112,17 @@ class Source::Extractor
       when "post"
         api_response&.dig("post", "comment")
       when "product"
-        page&.at(".product-description")&.text
+        page&.at(".product-description > div")&.inner_html
       end
     end
 
     def dtext_artist_commentary_desc
-      DText.from_plaintext(artist_commentary_desc)
+      case work_type
+      when "post"
+        DText.from_plaintext(artist_commentary_desc)
+      when "product"
+        DText.from_html(artist_commentary_desc, base_url: "https://fantia.jp")
+      end
     end
 
     def work_type
@@ -131,9 +136,9 @@ class Source::Extractor
     memoize def page
       case work_type
       when "post"
-        http.cache(1.minute).parsed_get("https://fantia.jp/posts/#{work_id}")
+        parsed_get("https://fantia.jp/posts/#{work_id}")
       when "product"
-        http.cache(1.minute).parsed_get("https://fantia.jp/products/#{work_id}")
+        parsed_get("https://fantia.jp/products/#{work_id}")
       end
     end
 
@@ -146,12 +151,12 @@ class Source::Extractor
 
       http.cache(1.minute).headers(
         "X-CSRF-Token": csrf_token,
-        "X-Requested-With": "XMLHttpRequest"
+        "X-Requested-With": "XMLHttpRequest",
       ).parsed_get("https://fantia.jp/api/v1/posts/#{work_id}") || {}
     end
 
     def http
-      super.cookies(_session_id: Danbooru.config.fantia_session_id)
+      super.cookies(_session_id: credentials[:session_id])
     end
   end
 end

@@ -3,8 +3,6 @@
 class PasswordResetsController < ApplicationController
   respond_to :html, :xml, :json
 
-  rate_limit :create, rate: 1.0 / 1.minute, burst: 5
-  rate_limit :update, rate: 1.0 / 30.minutes, burst: 50
   verify_captcha only: :create
 
   rescue_from ActiveSupport::MessageVerifier::InvalidSignature do
@@ -49,14 +47,14 @@ class PasswordResetsController < ApplicationController
       new_password: params.dig(:user, :password),
       password_confirmation: params.dig(:user, :password_confirmation),
       verification_code: params.dig(:user, :verification_code),
-      request: request
+      request: request,
     )
 
     if success
       SessionLoader.new(request).login_user(@user, :login)
-      flash[:notice] = "Password updated"
+      notice = "Password updated"
     end
 
-    respond_with(@user)
+    respond_with(@user, notice: notice)
   end
 end

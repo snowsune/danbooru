@@ -1,5 +1,6 @@
 import Post from './posts.js'
 import Utility from './utility'
+import Notice from './notice'
 
 let PostModeMenu = {};
 
@@ -20,13 +21,13 @@ PostModeMenu.initialize_shortcuts = function() {
 
 PostModeMenu.show_notice = function(mode, tag_script_index = 0) {
   if (mode === "add-fav") {
-    Utility.notice("Switched to favorite mode. Click a post to favorite it.");
+    Notice.info("Switched to favorite mode. Click a post to favorite it.");
   } else if (mode === "remove-fav") {
-    Utility.notice("Switched to unfavorite mode. Click a post to unfavorite it.");
+    Notice.info("Switched to unfavorite mode. Click a post to unfavorite it.");
   } else if (mode === "edit") {
-    Utility.notice("Switched to edit mode. Click a post to edit it.");
+    Notice.info("Switched to edit mode. Click a post to edit it.");
   } else if (mode === "tag-script") {
-    Utility.notice(`Switched to tag script #${tag_script_index}. To switch tag scripts, use the number keys.`);
+    Notice.info(`Switched to tag script #${tag_script_index}. To switch tag scripts, use the number keys.`);
   }
 }
 
@@ -77,8 +78,10 @@ PostModeMenu.initialize_edit_form = function() {
 
   $(document).on("click.danbooru", "#quick-edit-form input[type=submit]", async function(e) {
     e.preventDefault();
-    let post_id = $("#quick-edit-form").attr("data-post-id");
-    await Post.update(post_id, "quick-edit", { post: { tag_string: $("#post_tag_string").val() }});
+    const post_id = $("#quick-edit-form").attr("data-post-id");
+    const old_tag_string = $("#post_old_tag_string").val();
+    const tag_string = $("#post_tag_string").val();
+    await Post.update(post_id, "quick-edit", { post: { old_tag_string, tag_string } });
   });
 }
 
@@ -132,10 +135,15 @@ PostModeMenu.open_edit = function(post_id) {
   var $post = $("#post_" + post_id);
   $("#quick-edit-div").slideDown("fast");
   $("#quick-edit-form").attr("data-post-id", post_id);
+  $('#post_old_tag_string').val($post.data("tags"));
   $("#post_tag_string").val($post.data("tags") + " ").focus().selectEnd();
 }
 
 PostModeMenu.click = function(e) {
+  if (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) {
+    return;
+  }
+
   var s = $("#mode-box select").val();
   var post_id = $(e.target).closest("article").data("id");
 

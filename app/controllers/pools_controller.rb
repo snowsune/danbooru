@@ -3,16 +3,6 @@
 class PoolsController < ApplicationController
   respond_to :html, :xml, :json, :js
 
-  def new
-    @pool = authorize Pool.new(permitted_attributes(Pool))
-    respond_with(@pool)
-  end
-
-  def edit
-    @pool = authorize Pool.find(params[:id])
-    respond_with(@pool)
-  end
-
   def index
     if request.format.html?
       @pools = authorize Pool.paginated_search(params, count_pages: true, defaults: { is_deleted: false })
@@ -20,14 +10,6 @@ class PoolsController < ApplicationController
       @pools = authorize Pool.paginated_search(params, count_pages: true)
     end
 
-    respond_with(@pools)
-  end
-
-  def gallery
-    limit = params[:limit].presence || CurrentUser.user.per_page
-    search = search_params.presence || ActionController::Parameters.new(category: "series")
-
-    @pools = authorize Pool.search(search, CurrentUser.user).paginate(params[:page], limit: limit, search_count: params[:search])
     respond_with(@pools)
   end
 
@@ -39,44 +21,60 @@ class PoolsController < ApplicationController
     respond_with(@pool)
   end
 
+  def new
+    @pool = authorize Pool.new(permitted_attributes(Pool))
+    respond_with(@pool)
+  end
+
+  def edit
+    @pool = authorize Pool.find(params[:id])
+    respond_with(@pool)
+  end
+
+  def gallery
+    limit = params[:limit].presence || CurrentUser.user.per_page
+    search = search_params.presence || ActionController::Parameters.new(category: "series")
+
+    @pools = authorize Pool.search(search, CurrentUser.user).paginate(params[:page], limit: limit, search_count: params[:search])
+    respond_with(@pools)
+  end
+
   def create
     @pool = authorize Pool.new(permitted_attributes(Pool))
     @pool.save
-    flash[:notice] = @pool.valid? ? "Pool created" : @pool.errors.full_messages.join("; ")
-    respond_with(@pool)
+
+    respond_with(@pool, notice: "Pool created")
   end
 
   def update
     @pool = authorize Pool.find(params[:id])
     @pool.update(permitted_attributes(@pool))
-    unless @pool.errors.any?
-      flash[:notice] = "Pool updated"
-    end
-    respond_with(@pool)
+
+    respond_with(@pool, notice: "Pool updated")
   end
 
   def destroy
     @pool = authorize Pool.find(params[:id])
     @pool.update(is_deleted: true)
     @pool.create_mod_action_for_delete
-    flash[:notice] = "Pool deleted"
-    respond_with(@pool)
+
+    respond_with(@pool, notice: "Pool deleted")
   end
 
   def undelete
     @pool = authorize Pool.find(params[:id])
     @pool.update(is_deleted: false)
     @pool.create_mod_action_for_undelete
-    flash[:notice] = "Pool undeleted"
-    respond_with(@pool)
+
+    respond_with(@pool, notice: "Pool undeleted")
   end
 
   def revert
     @pool = authorize Pool.find(params[:id])
     @version = @pool.versions.find(params[:version_id])
     @pool.revert_to!(@version)
-    flash[:notice] = "Pool reverted"
-    respond_with(@pool) do |format|
+
+    respond_with(@pool, notice: "Pool reverted") do |format|
       format.js
     end
   end

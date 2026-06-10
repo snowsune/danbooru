@@ -5,7 +5,6 @@ class ApplicationRecord < ActiveRecord::Base
 
   include Deletable
   include Mentionable
-  include Normalizable
   include DTextAttribute
   include ArrayAttribute
   include HasDtextLinks
@@ -95,8 +94,9 @@ class ApplicationRecord < ActiveRecord::Base
       policy.html_data_attributes
     end
 
-    def serializable_hash(options = {})
-      options ||= {}
+    def serializable_hash(opts = {})
+      options = opts.dup || {}
+
       if options[:only].is_a?(String)
         options.delete(:methods)
         options.delete(:include)
@@ -187,13 +187,20 @@ class ApplicationRecord < ActiveRecord::Base
       end
     end
 
+    # Like `update`, but locks the record before updating it.
+    def locked_update(**args)
+      with_lock do
+        update(**args)
+      end
+    end
+
     # Save the record, but convert RecordNotUnique exceptions thrown by the database into
     # Rails validation errors. This way duplicate records only return one type of error.
     # This assumes the table only has one uniqueness constraint in the database.
     def save_if_unique(column)
       save
-    rescue ActiveRecord::RecordNotUnique => e
-      self.errors.add(column, :taken)
+    rescue ActiveRecord::RecordNotUnique
+      errors.add(column, :taken)
       false
     end
   end

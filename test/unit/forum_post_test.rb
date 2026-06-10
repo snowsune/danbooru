@@ -1,56 +1,58 @@
-require 'test_helper'
+require "test_helper"
 
 class ForumPostTest < ActiveSupport::TestCase
   context "A forum post" do
     setup do
-      @user = FactoryBot.create(:user)
-      CurrentUser.user = @user
-      @topic = FactoryBot.create(:forum_topic)
-    end
-
-    teardown do
-      CurrentUser.user = nil
+      @user = create(:user)
+      @topic = create(:forum_topic)
     end
 
     context "that mentions a user" do
       context "in a quote block" do
         setup do
-          @user2 = FactoryBot.create(:user)
+          @user2 = create(:user)
         end
 
         should "not create a dmail" do
           assert_difference("Dmail.count", 0) do
-            FactoryBot.create(:forum_post, :topic_id => @topic.id, :body => "[quote]@#{@user2.name}[/quote]")
+            create(:forum_post, topic_id: @topic.id, body: "[quote]@#{@user2.name}[/quote]")
           end
 
           assert_difference("Dmail.count", 0) do
-            FactoryBot.create(:forum_post, :topic_id => @topic.id, :body => "[quote]@#{@user2.name}[/quote] blah [quote]@#{@user2.name}[/quote]")
+            create(:forum_post, topic_id: @topic.id, body: "[quote]@#{@user2.name}[/quote] blah [quote]@#{@user2.name}[/quote]")
           end
 
           assert_difference("Dmail.count", 0) do
-            FactoryBot.create(:forum_post, :topic_id => @topic.id, :body => "[quote][quote]@#{@user2.name}[/quote][/quote]")
+            create(:forum_post, topic_id: @topic.id, body: "[quote][quote]@#{@user2.name}[/quote][/quote]")
           end
 
           assert_difference("Dmail.count", 1) do
-            FactoryBot.create(:forum_post, :topic_id => @topic.id, :body => "[quote]@#{@user2.name}[/quote] @#{@user2.name}")
+            create(:forum_post, topic_id: @topic.id, body: "[quote]@#{@user2.name}[/quote] @#{@user2.name}")
           end
         end
       end
 
       context "outside a quote block" do
         setup do
-          @user2 = FactoryBot.create(:user)
-          @post = build(:forum_post, creator: @user, topic: @topic, body: "Hey @#{@user2.name} check this out!")
+          @user2 = create(:user)
+          @post = build(:forum_post, creator: @user, topic: @topic, body: <<~EOF)
+            [quote]
+              someone said:
+              hello!
+            [/quote]
+
+            Hey @#{@user2.name} check this out!
+          EOF
         end
 
-        should "create a dmail" do
+        should "create a dmail and strip quote blocks" do
           assert_difference("Dmail.count", 1) do
             @post.save
           end
 
           dmail = Dmail.last
-          assert_equal(<<-EOS.strip_heredoc, dmail.body)
-            @#{@user.name} mentioned you in topic ##{@topic.id} (\"#{@topic.title}\":[/forum_topics/#{@topic.id}?page=1]):
+          assert_equal(<<~EOS.strip, dmail.body)
+            @#{@user.name} mentioned you in forum ##{@post.id} ("#{@topic.title}":[/forum_topics/#{@topic.id}?page=1]). This is an excerpt from the message:
 
             [quote]
             Hey @#{@user2.name} check this out!
@@ -59,15 +61,43 @@ class ForumPostTest < ActiveSupport::TestCase
         end
       end
 
+      context "with a long message" do
+        setup do
+          @user2 = create(:user)
+          @post = build(:forum_post, creator: @user, topic: @topic, body: ("hello this is a long message\n\n" * 10) + "Hey @#{@user2.name} check this out!" + ("\n\nhello this is a long message" * 10))
+        end
+
+        should "split paragraphs and only send an excerpt" do
+          assert_difference("Dmail.count", 1) do
+            @post.save
+          end
+
+          dmail = Dmail.last
+          assert_equal(<<~EOS.strip, dmail.body)
+            @#{@user.name} mentioned you in forum ##{@post.id} ("#{@topic.title}":[/forum_topics/#{@topic.id}?page=1]). This is an excerpt from the message:
+
+            [quote]
+            [...]
+            hello this is a long message
+
+            Hey @#{@user2.name} check this out!
+
+            hello this is a long message
+            [...]
+            [/quote]
+          EOS
+        end
+      end
+
       should "not send a mention to yourself" do
         assert_no_difference("Dmail.count") do
-          @forum_post = as(@user) { create(:forum_post, body: "hi from @#{@user.name}") }
+          as(@user) { create(:forum_post, creator: @user, body: "hi from @#{@user.name}") }
         end
       end
 
       should "not fail when mentioning a nonexistent user" do
         assert_no_difference("Dmail.count") do
-          @forum_post = as(@user) { create(:forum_post, body: "hi from @nonamethanks") }
+          as(@user) { create(:forum_post, creator: @user, body: "hi from @nonamethanks") }
         end
       end
     end
@@ -77,24 +107,21 @@ class ForumPostTest < ActiveSupport::TestCase
         Danbooru.config.stubs(:posts_per_page).returns(3)
         @posts = []
         9.times do
-          @posts << FactoryBot.create(:forum_post, :topic_id => @topic.id, :body => rand(100_000))
+          @posts << create(:forum_post, topic_id: @topic.id, body: rand(100_000))
         end
         travel(2.seconds) do
-          @posts << FactoryBot.create(:forum_post, :topic_id => @topic.id, :body => rand(100_000))
+          @posts << create(:forum_post, topic_id: @topic.id, body: rand(100_000))
         end
       end
 
       context "that is deleted" do
-        setup do
-          CurrentUser.user = FactoryBot.create(:moderator_user)
-        end
-
         should "update the topic's updated_at timestamp" do
-          @topic.reload
-          assert_equal(@posts[-1].updated_at.to_i, @topic.updated_at.to_i)
-          @posts[-1].delete!
-          @topic.reload
-          assert_equal(@posts[-2].updated_at.to_i, @topic.updated_at.to_i)
+          @mod = create(:moderator_user)
+
+          assert_equal(@posts[-1].updated_at.to_i, @topic.reload.updated_at.to_i)
+          @posts[-1].delete!(@mod)
+
+          assert_equal(@posts[-2].updated_at.to_i, @topic.reload.updated_at.to_i)
         end
       end
 
@@ -115,16 +142,16 @@ class ForumPostTest < ActiveSupport::TestCase
     should "update the topic when created" do
       @original_topic_updated_at = @topic.updated_at
       travel(1.second) do
-        post = FactoryBot.create(:forum_post, :topic_id => @topic.id)
+        create(:forum_post, topic_id: @topic.id)
       end
-      @topic.reload
-      assert_not_equal(@original_topic_updated_at.to_s, @topic.updated_at.to_s)
+
+      assert_not_equal(@original_topic_updated_at.to_s, @topic.reload.updated_at.to_s)
     end
 
     should "update the topic when updated only for the original post" do
       posts = []
       3.times do
-        posts << FactoryBot.create(:forum_post, :topic_id => @topic.id, :body => rand(100_000))
+        posts << create(:forum_post, topic_id: @topic.id, body: rand(100_000))
       end
 
       # updating the original post
@@ -148,21 +175,18 @@ class ForumPostTest < ActiveSupport::TestCase
       assert_search_equals([], body_matches: "aaa")
     end
 
-    should "initialize its creator" do
+    should "initialize its updater" do
       post = create(:forum_post, topic: @topic, creator: @user)
-      assert_equal(@user.id, post.creator_id)
+      assert_equal(@user, post.updater)
     end
 
     context "updated by a second user" do
-      setup do
-        @post = FactoryBot.create(:forum_post, :topic_id => @topic.id)
-        @second_user = FactoryBot.create(:user)
-        CurrentUser.user = @second_user
-      end
-
       should "record its updater" do
-        @post.update(body: "abc")
-        assert_equal(@second_user.id, @post.updater_id)
+        @post = create(:forum_post)
+        @second_user = create(:user)
+
+        @post.update(body: "abc", updater: @second_user)
+        assert_equal(@second_user, @post.updater)
       end
     end
 
@@ -172,6 +196,23 @@ class ForumPostTest < ActiveSupport::TestCase
       should_not allow_value("").for(:body)
       should_not allow_value(" ").for(:body)
       should_not allow_value("\u200B").for(:body)
+      should_not allow_value((["!post #1"] * 10).join("\n")).for(:body)
+
+      should "not allow NSFW media embeds" do
+        post = create(:post, rating: "e")
+        forum_post = build(:forum_post, body: "!post ##{post.id}").tap(&:validate)
+
+        assert_includes(forum_post.errors[:body], "can't include NSFW images")
+      end
+    end
+
+    context "during normalization" do
+      should normalize_attribute(:body).from(" ").to("")
+      should normalize_attribute(:body).from("  \u200B  ").to("")
+      should normalize_attribute(:body).from(" foo ").to("foo")
+      should normalize_attribute(:body).from("foo\tbar").to("foo bar")
+      should normalize_attribute(:body).from("foo\nbar").to("foo\r\nbar")
+      should normalize_attribute(:body).from("Pokémon".unicode_normalize(:nfd)).to("Pokémon".unicode_normalize(:nfc))
     end
   end
 end

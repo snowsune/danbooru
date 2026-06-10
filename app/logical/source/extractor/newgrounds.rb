@@ -4,6 +4,10 @@
 module Source
   class Extractor
     class Newgrounds < Source::Extractor
+      def self.enabled?
+        SiteCredential.for_site("Newgrounds").present?
+      end
+
       def image_urls
         if parsed_url.full_image_url.present?
           [parsed_url.full_image_url]
@@ -29,7 +33,11 @@ module Source
 
           urls += page&.css("#author_comments img[data-user-image='1']").to_a.map { |img| img["data-smartload-src"] || img["src"] }
 
-          urls.compact
+          urls.filter_map do |url|
+            parsed_url = Source::URL.parse(url)
+            next if parsed_url.blank?
+            [parsed_url.candidate_full_image_urls.to_a.find { |url| http_exists?(url) }, parsed_url.full_image_url].compact
+          end.flatten
         end
       end
 
@@ -39,15 +47,23 @@ module Source
         images.pluck("image")
       end
 
+      def published_at
+        if parsed_url.image_url?
+          nil
+        else
+          date_string = page&.css("meta[itemprop=datePublished]")&.attr("content")
+          Time.iso8601(date_string).utc if date_string
+        end
+      end
+
       def tags
         page&.css("#sidestats .tags a").to_a.map do |tag|
           [tag.text, "https://www.newgrounds.com/search/conduct/art?match=tags&tags=#{tag.text}"]
         end
       end
 
-      def normalize_tag(tag)
-        tag = tag.tr("-", "_")
-        super(tag)
+      def normalized_tags
+        super.map { [it, it.tr("-", "_")] }.flatten.uniq
       end
 
       def display_name
@@ -68,7 +84,7 @@ module Source
 
       def artist_commentary_desc
         return "" if page.nil?
-        page.dup.css("#author_comments").tap { _1.css("ul.itemlist").remove }.to_html
+        page.dup.css("#author_comments").tap { it.css("ul.itemlist").remove }.to_html
       end
 
       def dtext_artist_commentary_desc
@@ -84,7 +100,7 @@ module Source
       end
 
       def http
-        super.cookies(vmkIdu5l8m: Danbooru.config.newgrounds_session_cookie)
+        super.cookies(ng_remember: credentials[:session_cookie])
       end
 
       def video_page_url
@@ -92,7 +108,7 @@ module Source
       end
 
       memoize def page
-        http.cache(1.minute).parsed_get(page_url)
+        parsed_get(page_url)
       end
 
       memoize def video_data

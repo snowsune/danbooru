@@ -66,6 +66,14 @@ class UserMailerTest < ActionMailer::TestCase
       end
     end
 
+    context "login_verification method" do
+      should "work" do
+        @user_event = create(:user_event, user: @user, category: :login_pending_verification)
+        mail = UserMailer.login_verification(@user_event)
+        assert_emails(1) { mail.deliver_now }
+      end
+    end
+
     context "welcome_user method" do
       should "work" do
         mail = UserMailer.welcome_user(@user)
@@ -76,6 +84,15 @@ class UserMailerTest < ActionMailer::TestCase
         @user = create(:user)
         mail = UserMailer.welcome_user(@user)
         assert_emails(0) { mail.deliver_now }
+      end
+    end
+
+    context "send_backup_code method" do
+      should "work" do
+        @user.generate_backup_codes!
+        mail = UserMailer.send_backup_code(@user)
+
+        assert_emails(1) { mail.deliver_now }
       end
     end
 

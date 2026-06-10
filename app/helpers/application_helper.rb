@@ -12,7 +12,7 @@ module ApplicationHelper
   ]
 
   def listing_type(*fields, member_check: true, types: [:revert, :standard])
-    (fields.reduce(false) { |acc, field| acc || params.dig(:search, field).present? } && (!member_check || CurrentUser.is_member?) ? types[0] : types[1])
+    ((fields.reduce(false) { |acc, field| acc || params.dig(:search, field).present? } && (!member_check || CurrentUser.is_member?)) ? types[0] : types[1])
   end
 
   def diff_list_html(this_list, other_list, ul_class: ["diff-list"], li_class: [], show_unchanged: true)
@@ -38,7 +38,7 @@ module ApplicationHelper
     other = record.send(type)
 
     if other.blank?
-      return type == "previous" ? "New" : ""
+      return (type == "previous") ? "New" : ""
     end
 
     changed_fields = record.class.status_fields.select do |field, _status|
@@ -52,12 +52,6 @@ module ApplicationHelper
     tag.div(class: "version-statuses", "data-altered": altered) do
       safe_join(statuses, tag.br)
     end
-  end
-
-  def wordbreakify(string)
-    lines = string.scan(/.{1,10}/)
-    wordbreaked_string = lines.map {|str| h(str)}.join("<wbr>")
-    raw(wordbreaked_string)
   end
 
   def version_type_links(params)
@@ -76,24 +70,21 @@ module ApplicationHelper
     url_for(request.query_parameters.merge(params))
   end
 
-  def nav_link_to(text, url, **options)
-    klass = options.delete(:class)
-
-    if nav_link_match(params[:controller], url)
-      klass = "#{klass} current"
-    end
-
-    li_link_to(text, url, id_prefix: "nav-", class: klass, **options)
+  def subnav_link_to(*args, **options, &block)
+    li_link_to(*args, id_prefix: "subnav-", **options, &block)
   end
 
-  def subnav_link_to(text, url, **options)
-    li_link_to(text, url, id_prefix: "subnav-", **options)
+  def li_link_to(*args, id: nil, id_prefix: nil, **options, &block)
+    klass = options.delete(:class)
+    text = args.first if args.size == 2
+    id = text.downcase.gsub(/[^a-z ]/, "").parameterize if text.present? && id.blank?
+    id = id_prefix.to_s + id.to_s
+
+    link_to(*args, id: id, class: "py-1.5 px-3 #{klass}", **options, &block)
   end
 
-  def li_link_to(text, url, id_prefix: "", **options)
-    klass = options.delete(:class)
-    id = id_prefix + text.downcase.gsub(/[^a-z ]/, "").parameterize
-    tag.li(link_to(text, url, id: "#{id}-link", **options), id: id, class: klass)
+  def subnav_divider
+    tag.span("|", class: "text-muted select-none")
   end
 
   def format_text(text, references: DText.preprocess([text]), **options)
@@ -107,11 +98,10 @@ module ApplicationHelper
   def time_tag(content, time, **options)
     datetime = time.strftime("%Y-%m-%dT%H:%M%:z")
 
-    tag.time content || datetime, datetime: datetime, title: time.to_formatted_s, **options
+    tag.time content || datetime, datetime: datetime, title: time.to_fs, **options
   end
 
   def duration_to_hhmmss(seconds)
-    seconds = seconds.round
     hh = seconds.div(1.hour)
     mm = (seconds.seconds - hh.hours.seconds).div(1.minute)
     ss = "%.2d" % (seconds % 1.minute)
@@ -158,15 +148,15 @@ module ApplicationHelper
         human_time = time_ago_in_words(time).gsub(/about|over|less than|almost/, "")
         time_tag("#{human_time} ago", time)
       elsif time > Time.zone.today.beginning_of_year
-        time_tag(time.strftime("%b %e"), time)
+        time_tag(time.strftime("%B #{time.day.ordinalize}"), time)
       else
-        time_tag(time.strftime("%b %e, %Y"), time)
+        time_tag(time.strftime("%B #{time.day.ordinalize}, %Y"), time)
       end
     elsif time.future?
       if time < 1.day.from_now
         time_tag("in #{time_ago_in_words(time)}", time)
       else
-        time_tag(time.strftime("%b %e, %Y"), time)
+        time_tag(time.strftime("%B #{time.day.ordinalize}, %Y"), time)
       end
     end
   end
@@ -272,19 +262,12 @@ module ApplicationHelper
     CaptchaService.new.captcha_tag(...)
   end
 
-  def dtext_preview_button(preview_field, media_embeds: false, class: nil)
-    klass = binding.local_variable_get(:class)
-    tag.input value: "Preview", type: "button", class: "dtext-preview-button #{klass}", "data-preview-field": preview_field, "data-media-embeds": media_embeds
-  end
-
   def quick_search_form_for(attribute, url, name, autocomplete: nil, redirect: false, &block)
-    tag.li do
-      search_form_for(url, classes: "quick-search-form one-line-form") do |f|
-        out  = f.input attribute, label: false, placeholder: "Search #{name}", input_html: { id: nil, "data-autocomplete": autocomplete }
-        out += tag.input type: :hidden, name: :redirect, value: redirect
-        out += capture { yield f } if block_given?
-        out
-      end
+    search_form_for(url, classes: "quick-search-form one-line-form py-1.5 px-3 md:w-180px w-full") do |f|
+      out  = f.input attribute, label: false, placeholder: "Search #{name}", input_html: { "id": nil, "data-autocomplete": autocomplete }
+      out += tag.input type: :hidden, name: :redirect, value: redirect
+      out += capture { yield f } if block_given?
+      out
     end
   end
 
@@ -300,21 +283,29 @@ module ApplicationHelper
     end
   end
 
-  def edit_form_for(model, validate: false, error_notice: true, warning_notice: true, **options, &block)
+  def edit_form_for(model, validate: false, error_notice: true, warning_notice: true, formatted_errors: false, **options, &block)
     options[:html] = { autocomplete: "off", novalidate: !validate, **options[:html].to_h }
     options[:authenticity_token] = true if options[:remote] == true
 
     simple_form_for(model, **options) do |form|
       if error_notice && model.try(:errors).try(:any?)
-        concat tag.div(format_text(model.errors.full_messages.join("; ")), class: "notice notice-error notice-small prose")
+        error_msg = formatted_errors ? format_errors(model.errors) : model.errors.full_messages.join("; ")
+        concat tag.div(format_text(error_msg), class: "notice notice-error notice-small prose")
       end
 
       if warning_notice && model.try(:warnings).try(:any?)
-        concat tag.div(format_text(model.warnings.full_messages.join("; ")), class: "notice notice-info notice-small prose")
+        warning_msg = formatted_errors ? format_errors(model.warnings) : model.warnings.full_messages.join("; ")
+        concat tag.div(format_text(warning_msg), class: "notice notice-info notice-small prose")
       end
 
       block.call(form)
     end
+  end
+
+  def format_errors(errors)
+    messages = errors.full_messages
+    messages = messages.map { |e| "* #{e}" } if messages.count > 1
+    messages.join("\n")
   end
 
   def table_for(...)
@@ -340,15 +331,15 @@ module ApplicationHelper
       class: "c-#{controller_param} a-#{action_param} flex flex-col",
       spellcheck: "false",
       data: {
-        controller: controller_param,
-        action: action_param,
-        layout: layout,
+        "controller": controller_param,
+        "action": action_param,
+        "layout": layout,
         "current-user-ip-addr": request.remote_ip,
         "current-user-save-data": CurrentUser.save_data,
         **data_attributes_for(current_user, "current-user", USER_DATA_ATTRIBUTES),
         **data_attributes_for(cookies, "cookie", COOKIE_DATA_ATTRIBUTES),
         **extra_attributes,
-      }
+      },
     }
   end
 
@@ -363,9 +354,9 @@ module ApplicationHelper
   end
 
   def data_attributes_for(record, prefix = "data", attributes = record.html_data_attributes)
-    attributes.map do |attr|
+    attributes.to_h do |attr|
       if attr.is_a?(Array)
-        name = attr.map {|sym| sym.to_s.dasherize.delete("?")}.join('-')
+        name = attr.map { |sym| sym.to_s.dasherize.delete("?") }.join("-")
         value = record
         attr.each do |sym|
           value = value.send(sym)
@@ -381,7 +372,9 @@ module ApplicationHelper
         value = record[attr]
       end
 
-      if value.nil?
+      if value.is_a?(Time)
+        value = value.strftime("%Y-%m-%dT%H:%M:%S.%6N%:z")
+      elsif value.nil?
         value = "null"
       end
 
@@ -390,7 +383,7 @@ module ApplicationHelper
       else
         [:"#{prefix}-#{name}", value]
       end
-    end.to_h
+    end
   end
 
   def page_title(title = nil, suffix: "| #{Danbooru.config.app_name}")
@@ -444,44 +437,5 @@ module ApplicationHelper
 
   def atom_feed_tag(title, url = {})
     content_for(:html_header, auto_discovery_link_tag(:atom, url, title: title))
-  end
-
-  protected
-
-  def nav_link_match(controller, url)
-    url =~ case controller
-    when "sessions", "users", "admin/users"
-      %r{^/(session|users)}
-
-    when "comments"
-      %r{^/comments}
-
-    when "notes", "note_versions"
-      %r{^/notes}
-
-    when "posts", "uploads", "post_versions", "explore/posts", "moderator/post/dashboards", "favorites"
-      %r{^/post}
-
-    when "artists", "artist_versions"
-      %r{^/artist}
-
-    when "tags", "tag_aliases", "tag_implications"
-      %r{^/tags}
-
-    when "pools", "pool_versions"
-      %r{^/pools}
-
-    when "moderator/dashboards"
-      %r{^/moderator}
-
-    when "wiki_pages", "wiki_page_versions"
-      %r{^/wiki_pages}
-
-    when "forum_topics", "forum_posts"
-      %r{^/forum_topics}
-
-    else
-      %r{^/static}
-    end
   end
 end

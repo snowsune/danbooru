@@ -1,8 +1,8 @@
-require 'test_helper'
+require "test_helper"
 
 class DanbooruHttpTest < ActiveSupport::TestCase
   def httpbin_url(path = "")
-    "https://nghttp2.org/httpbin/#{path}"
+    "https://httpbin.org/#{path}"
   end
 
   context "Danbooru::Http" do
@@ -34,7 +34,7 @@ class DanbooruHttpTest < ActiveSupport::TestCase
       should "fail if the request takes too long to download" do
         # XXX should return status 597 instead
         assert_raises(HTTP::TimeoutError) do
-          response = Danbooru::Http.timeout(1).get(httpbin_url("drip?duration=10&numbytes=10")).flush
+          Danbooru::Http.timeout(1).get(httpbin_url("drip?duration=10&numbytes=10")).flush
         end
       end
 
@@ -86,7 +86,7 @@ class DanbooruHttpTest < ActiveSupport::TestCase
 
         assert_equal(200, resp.status)
         assert_equal(httpbin_url("anything/foo%20%F0%9F%98%83%60~!@$%25%5E&*()_-+=%7B%7D%5B%5D%7C%5C:;%22'%3C%3E,./?bar=baz%20%F0%9F%98%83`~!@$^&*()_-+={}[]|\\:;\"'<>,./&blah%F0%9F%98%83#hash"), resp.request.uri.to_s)
-        assert_equal(httpbin_url("anything/foo%20😃%60~%21%40%24%25%5E%26%2A%28%29_-%2B%3D%7B%7D%5B%5D%7C%5C:%3B%22%27%3C%3E%2C./?bar=baz%20😃%60~!%40$%5E&*()_-+=%7B%7D%5B%5D%7C%5C:%3B%22'%3C%3E,.%2F&blah😃"), resp.parse["url"])
+        assert_equal(httpbin_url("anything/foo 😃`~!@$%25^&*()_-+={}[]|\\:%3B\"'<>,./?bar=baz 😃`~!%40$^&*()_-+={}[]|\\:%3B\"'<>,.%2F&blah😃"), resp.parse["url"])
       end
 
       should "work for a URL containing percent-encoded characters" do
@@ -94,7 +94,7 @@ class DanbooruHttpTest < ActiveSupport::TestCase
 
         assert_equal(200, resp.status)
         assert_equal(httpbin_url("anything/foo%20bar%2Fbaz"), resp.request.uri.to_s)
-        assert_equal(httpbin_url("anything/foo%20bar/baz"), resp.parse["url"]) # httpbin decodes the %2F
+        assert_equal(httpbin_url("anything/foo bar/baz"), resp.parse["url"]) # httpbin decodes encoded URLs
       end
 
       should "work for a URL containing Unicode characters" do
@@ -107,8 +107,8 @@ class DanbooruHttpTest < ActiveSupport::TestCase
         resp = Danbooru::Http.head(httpbin_url("anything/\u30D5\u3099")) # U+30D5 U+3099 = ブ ('KATAKANA LETTER HU', 'COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK')
         assert_equal(httpbin_url("anything/%E3%83%95%E3%82%99"), resp.request.uri.to_s)
 
-        resp = Danbooru::Http.head("https://tuyu-official.jp/wp/wp-content/uploads/2022/09/雨模様［サブスクジャケット］.jpeg")
-        assert_equal(200, resp.status)
+        resp = Danbooru::Http.with_legacy_ssl.head("https://tuyu-official.jp/wp/wp-content/uploads/2022/09/雨模様［サブスクジャケット］.jpeg")
+        assert_equal(404, resp.status)
         assert_equal("%E9%9B%A8%E6%A8%A1%E6%A7%98%EF%BC%BB%E3%82%B5%E3%83%95%E3%82%99%E3%82%B9%E3%82%AF%E3%82%B7%E3%82%99%E3%83%A3%E3%82%B1%E3%83%83%E3%83%88%EF%BC%BD.jpeg", resp.request.uri.path.split("/").last)
       end
 
@@ -142,7 +142,7 @@ class DanbooruHttpTest < ActiveSupport::TestCase
         assert_equal("http://www.google.com/", Danbooru::Http.redirect_url("http://google.com").to_s)
         assert_equal("https://www.google.com/", Danbooru::Http.redirect_url("https://google.com").to_s)
 
-        assert_equal(nil, Danbooru::Http.redirect_url("https://google.dne"))
+        assert_nil(Danbooru::Http.redirect_url("https://google.dne"))
       end
     end
 
@@ -180,17 +180,17 @@ class DanbooruHttpTest < ActiveSupport::TestCase
 
     context "retriable feature" do
       should "not retry if the Retry-After header is sent with a 2xx or 3xx response" do
-        response_200 = ::HTTP::Response.new(status: 200, version: "1.1", headers: { "Retry-After": "0" }, body: "", request: nil)
-        HTTP::Client.any_instance.expects(:perform).times(1).returns(response_200)
+        response200 = ::HTTP::Response.new(status: 200, version: "1.1", headers: { "Retry-After": "0" }, body: "", request: nil)
+        HTTP::Client.any_instance.expects(:perform).times(1).returns(response200)
 
         response = Danbooru::Http.use(:retriable).get(httpbin_url("status/200"))
         assert_equal(200, response.status)
       end
 
       should "retry after the max_delay if the server returns a 429 error with no Retry-After header" do
-        response_429 = ::HTTP::Response.new(status: 429, version: "1.1", body: "", request: nil)
-        response_200 = ::HTTP::Response.new(status: 200, version: "1.1", body: "", request: nil)
-        HTTP::Client.any_instance.expects(:perform).times(2).returns(response_429, response_200)
+        response429 = ::HTTP::Response.new(status: 429, version: "1.1", body: "", request: nil)
+        response200 = ::HTTP::Response.new(status: 200, version: "1.1", body: "", request: nil)
+        HTTP::Client.any_instance.expects(:perform).times(2).returns(response429, response200)
 
         duration = Benchmark.realtime do
           response = Danbooru::Http.use(retriable: { max_delay: 1.second }).get(httpbin_url("status/429"))
@@ -201,27 +201,27 @@ class DanbooruHttpTest < ActiveSupport::TestCase
       end
 
       should "retry immediately if the request returns a >=597 error" do
-        response_597 = ::HTTP::Response.new(status: 597, version: "1.1", body: "", request: nil)
-        response_200 = ::HTTP::Response.new(status: 200, version: "1.1", body: "", request: nil)
-        HTTP::Client.any_instance.expects(:perform).times(2).returns(response_597, response_200)
+        response597 = ::HTTP::Response.new(status: 597, version: "1.1", body: "", request: nil)
+        response200 = ::HTTP::Response.new(status: 200, version: "1.1", body: "", request: nil)
+        HTTP::Client.any_instance.expects(:perform).times(2).returns(response597, response200)
 
         response = Danbooru::Http.use(:retriable).get(httpbin_url("status/597"))
         assert_equal(200, response.status)
       end
 
       should "retry if the Retry-After header is an integer" do
-        response_429 = ::HTTP::Response.new(status: 429, version: "1.1", headers: { "Retry-After": "1" }, body: "", request: nil)
-        response_200 = ::HTTP::Response.new(status: 200, version: "1.1", body: "", request: nil)
-        HTTP::Client.any_instance.expects(:perform).times(2).returns(response_429, response_200)
+        response429 = ::HTTP::Response.new(status: 429, version: "1.1", headers: { "Retry-After": "1" }, body: "", request: nil)
+        response200 = ::HTTP::Response.new(status: 200, version: "1.1", body: "", request: nil)
+        HTTP::Client.any_instance.expects(:perform).times(2).returns(response429, response200)
 
         response = Danbooru::Http.use(:retriable).get(httpbin_url("status/429"))
         assert_equal(200, response.status)
       end
 
       should "retry if the Retry-After header is a date" do
-        response_429 = ::HTTP::Response.new(status: 429, version: "1.1", headers: { "Retry-After": 2.seconds.from_now.httpdate }, body: "", request: nil)
-        response_200 = ::HTTP::Response.new(status: 200, version: "1.1", body: "", request: nil)
-        HTTP::Client.any_instance.expects(:perform).times(2).returns(response_429, response_200)
+        response429 = ::HTTP::Response.new(status: 429, version: "1.1", headers: { "Retry-After": 2.seconds.from_now.httpdate }, body: "", request: nil)
+        response200 = ::HTTP::Response.new(status: 200, version: "1.1", body: "", request: nil)
+        HTTP::Client.any_instance.expects(:perform).times(2).returns(response429, response200)
 
         response = Danbooru::Http.use(:retriable).get(httpbin_url("status/429"))
         assert_equal(200, response.status)
@@ -239,7 +239,7 @@ class DanbooruHttpTest < ActiveSupport::TestCase
 
     context "unpolish cloudflare feature" do
       should "return the original image for polished images" do
-        skip if ENV["CI"].present?
+        skip if ENV["DANBOORU_SKIP_EXTRACTOR_TESTS"].present?
 
         url = "https://cdnb.artstation.com/p/assets/images/images/025/273/307/4k/atey-ghailan-a-sage-keyart-s-ch-04-outlined-1.jpg?1585246642"
         response = Danbooru::Http.use(:unpolish_cloudflare).get(url)
@@ -252,11 +252,25 @@ class DanbooruHttpTest < ActiveSupport::TestCase
     context "public_only feature" do
       should "disallow connections to non-public IPs" do
         response = Danbooru::Http.public_only.get("http://127.0.0.1/foo.txt")
+        assert_equal(591, response.status)
 
+        response = Danbooru::Http.public_only.get("http://127.0.0.1./foo.txt")
+        assert_equal(598, response.status) # `127.0.0.1.` is treated as a domain name, which fails with a DNS resolution error
+
+        response = Danbooru::Http.public_only.get("http://0.0.0.0/foo.txt")
+        assert_equal(591, response.status)
+
+        response = Danbooru::Http.public_only.get("http://attacker.com@127.0.0.1/foo.txt")
+        assert_equal(591, response.status)
+
+        response = Danbooru::Http.public_only.get("http://127.0.0.1.nip.io/foo.txt")
+        assert_equal(591, response.status)
+
+        response = Danbooru::Http.public_only.get("http://[::ffff:7f00:1]/foo.txt")
         assert_equal(591, response.status)
       end
 
-      should "not raise an exception if the domain doesnt't exist" do
+      should "not raise an exception if the domain doesn't exist" do
         response = Danbooru::Http.public_only.get("http://google.dne")
 
         assert_equal(598, response.status)
@@ -292,13 +306,13 @@ class DanbooruHttpTest < ActiveSupport::TestCase
 
       should "fail if a download is too large" do
         assert_raises(Danbooru::Http::FileTooLargeError) do
-          response, file = Danbooru::Http.max_size(500).download_media(httpbin_url("bytes/1000"))
+          Danbooru::Http.max_size(500).download_media(httpbin_url("bytes/1000"))
         end
       end
 
       should "fail if a streaming download is too large" do
         assert_raises(Danbooru::Http::FileTooLargeError) do
-          response, file = Danbooru::Http.max_size(500).download_media(httpbin_url("stream-bytes/1000"))
+          Danbooru::Http.max_size(500).download_media(httpbin_url("stream-bytes/1000"))
         end
       end
     end

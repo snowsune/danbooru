@@ -16,26 +16,31 @@
 #
 # See https://github.com/danbooru/danbooru/wiki/Docker-Guide for more details.
 
-ARG MOZJPEG_URL="https://github.com/mozilla/mozjpeg/archive/refs/tags/v4.1.5.tar.gz"
-ARG VIPS_URL="https://github.com/libvips/libvips/releases/download/v8.14.2/vips-8.14.2.tar.xz"
-ARG FFMPEG_URL="https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n6.1.1.tar.gz"
-ARG EXIFTOOL_URL="https://github.com/exiftool/exiftool/archive/refs/tags/12.70.tar.gz"
-ARG OPENRESTY_URL="https://openresty.org/download/openresty-1.25.3.1.tar.gz"
-ARG RUBY_URL="https://cache.ruby-lang.org/pub/ruby/3.3/ruby-3.3.2.tar.gz"
-ARG RUBY_MINOR_VERSION="3.3.0"
-ARG NODE_VERSION="20.x"
-ARG UBUNTU_VERSION="24.04"
+# You must also update .ruby-version and the Gemfile when updating the Ruby version.
+# These versions are used by bin/danbooru-dev-entrypoint to detect whether the current installed docker containers are outdated
+ARG RUBY_VERSION="4.0.2"
+ARG RUBY_MAJOR_VERSION="4.0"
+
+ARG MOZJPEG_VERSION="4.1.5"
+ARG VIPS_VERSION="8.14.2"
+ARG FFMPEG_VERSION="7.1.1"
+ARG EXIFTOOL_VERSION="13.50"
+ARG OPENRESTY_VERSION="1.29.2.3"
+ARG NODE_VERSION="24.14.1"
+ARG UBUNTU_VERSION="noble-20260217@sha256:186072bba1b2f436cbb91ef2567abca677337cfc786c86e107d25b7072feef0c"
+ARG UBUNTU_SNAPSHOT="20260401T000000Z"
 
 
 # The base layer for everything.
 FROM ubuntu:$UBUNTU_VERSION AS base
 SHELL ["/bin/bash", "-xeuo", "pipefail", "-O", "globstar", "-O", "dotglob", "-c"]
 
-ARG RUBY_MINOR_VERSION
+ARG RUBY_MAJOR_VERSION
+ARG UBUNTU_SNAPSHOT
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV LANG=C.UTF-8
 ENV GEM_HOME=/home/danbooru/bundle
-ENV GEM_PATH=/home/danbooru/bundle/ruby/$RUBY_MINOR_VERSION:/usr/local/lib/ruby/gems/$RUBY_MINOR_VERSION
+ENV GEM_PATH=/home/danbooru/bundle/ruby/${RUBY_MAJOR_VERSION}.0:/usr/local/lib/ruby/gems/${RUBY_MAJOR_VERSION}.0
 ENV PATH=$GEM_HOME/bin:$PATH
 
 RUN <<EOS
@@ -46,20 +51,32 @@ RUN <<EOS
     Dpkg::Options {
       "--force-confnew";
       "--force-confdef";
+      "--log=/dev/null";
     }
+
+    Dir::Log::History "/dev/null";
+    Dir::Log::Terminal "/dev/null";
 EOF
 
-  apt-get update
-  apt-get install -y --no-install-recommends \
-    postgresql-client ca-certificates mkvtoolnix rclone openssl perl perl-modules-5.38 libpq5 libpcre3 libsodium23 \
+  apt-get install --update -y --no-install-recommends ca-certificates
+
+  cat > /etc/apt/apt.conf.d/50snapshot <<EOF
+    APT::Snapshot "$UBUNTU_SNAPSHOT";
+    Acquire::Snapshots::URI::Host::ports.ubuntu.com "https://snapshot.ubuntu.com/ubuntu/@SNAPSHOTID@/";
+EOF
+
+  rm -rf /var/lib/apt/lists/*
+  apt-get install --update -y --no-install-recommends \
+    postgresql-client mkvtoolnix rclone openssl perl perl-modules-5.38 libpq5 libpcre3 libsodium23 \
     libgmpxx4ldbl zlib1g libfftw3-bin libwebp7 libwebpmux3 libwebpdemux2 liborc-0.4.0t64 liblcms2-2 libpng16-16 libexpat1 \
-    libglib2.0-0 libgif7 libexif12 libheif1 libvpx9 libdav1d7 libseccomp-dev libjemalloc2 libarchive13 libyaml-0-2 libffi8 \
+    libglib2.0-0 libgif7 libexif12 libheif1 libx264-164 libx265-199 libsvtav1enc1d1 libvpx9 libdav1d7 libseccomp-dev libjemalloc2 libarchive13 libyaml-0-2 libffi8 \
     libreadline8t64 libarchive-zip-perl tini busybox less ncdu curl
 
   apt-get purge -y --allow-remove-essential pkg-config e2fsprogs mount procps python3 tzdata
   apt-get autoremove -y
   rm -rf /etc/gnutls/config /var/{lib,cache,log} /usr/share/{doc,info}/* /usr/local/*
   mkdir -p /var/{lib,cache,log}/apt /var/lib/dpkg
+  ln -sf /dev/null /var/log/alternatives.log
 
   busybox --install -s
 EOS
@@ -79,14 +96,16 @@ EOS
 
 # Build Ruby. Output is in /usr/local.
 FROM build-base AS build-ruby
+ARG JOBS
+ARG RUBY_VERSION
+ARG RUBY_MAJOR_VERSION
 ARG RUBY_BUILD_DEPS="rustc libssl-dev libgmp-dev libyaml-dev libffi-dev libreadline-dev zlib1g-dev"
-ARG RUBY_URL
 RUN <<EOS
   apt-get install -y --no-install-recommends $RUBY_BUILD_DEPS
-  curl -L $RUBY_URL | tar --strip-components=1 -xzvf -
+  curl -L "https://cache.ruby-lang.org/pub/ruby/${RUBY_MAJOR_VERSION}/ruby-${RUBY_VERSION}.tar.gz" | tar --strip-components=1 -xzvf -
 
   ./configure --enable-yjit --enable-shared --disable-install-doc
-  make -j install
+  make -j$JOBS install
 
   find /usr/local -type f -executable -exec strip --strip-unneeded {} \;
   rm -rf *
@@ -98,14 +117,15 @@ EOS
 
 # Build MozJPEG. Output is in /usr/local.
 FROM build-base AS build-mozjpeg
+ARG JOBS
+ARG MOZJPEG_VERSION
 ARG MOZJPEG_BUILD_DEPS="cmake nasm libpng-dev zlib1g-dev"
-ARG MOZJPEG_URL
 RUN <<EOS
   apt-get install -y --no-install-recommends $MOZJPEG_BUILD_DEPS
-  curl -L $MOZJPEG_URL | tar --strip-components=1 -xzvf -
+  curl -L "https://github.com/mozilla/mozjpeg/archive/refs/tags/v${MOZJPEG_VERSION}.tar.gz" | tar --strip-components=1 -xzvf -
 
   cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DENABLE_STATIC=0 -DWITH_ARITH_ENC=1 -DWITH_ARITH_DEC=1 .
-  make -j install/strip
+  make -j$JOBS install/strip
 
   rm -rf * /usr/local/share /usr/local/man
 
@@ -116,11 +136,11 @@ EOS
 
 # Build libvips. Output is in /usr/local.
 FROM build-mozjpeg AS build-vips
+ARG VIPS_VERSION
 ARG VIPS_BUILD_DEPS="meson libgirepository1.0-dev libfftw3-dev libwebp-dev liborc-dev liblcms2-dev libpng-dev libexpat1-dev libglib2.0-dev libgif-dev libexif-dev libheif-dev"
-ARG VIPS_URL
 RUN <<EOS
   apt-get install -y --no-install-recommends $VIPS_BUILD_DEPS
-  curl -L $VIPS_URL | tar --strip-components=1 -xJvf -
+  curl -L "https://github.com/libvips/libvips/releases/download/v${VIPS_VERSION}/vips-${VIPS_VERSION}.tar.xz" | tar --strip-components=1 -xJvf -
 
   meson build --prefix /usr/local --buildtype release --strip -Dcplusplus=false
   meson compile -C build
@@ -136,22 +156,24 @@ EOS
 
 # Build FFmpeg. Output is in /usr/local.
 FROM build-base AS build-ffmpeg
-ARG FFMPEG_URL
-ARG FFMPEG_BUILD_DEPS="nasm libvpx-dev libdav1d-dev zlib1g-dev"
+ARG JOBS
+ARG FFMPEG_VERSION
+ARG FFMPEG_BUILD_DEPS="nasm libx264-dev libx265-dev libsvtav1enc-dev libvpx-dev libdav1d-dev zlib1g-dev"
 ARG FFMPEG_BUILD_OPTIONS="\
-  --disable-ffplay --disable-network --disable-doc --disable-static --enable-shared \
-  --enable-libvpx --enable-libdav1d --enable-zlib \
+  --disable-ffplay --disable-network --disable-doc --disable-static --enable-shared --enable-gpl \
+  --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libvpx --enable-libdav1d --enable-zlib \
   --disable-muxers \
-    --enable-muxer=mp4 --enable-muxer=webm --enable-muxer=image2 --enable-muxer=null \
+    --enable-muxer=mp4 --enable-muxer=webm --enable-muxer=matroska --enable-muxer=image2 --enable-muxer=null \
   --disable-demuxers \
     --enable-demuxer=mov,mp4,m4a,3gp,3g2,mj2 --enable-demuxer=matroska,webm --enable-demuxer=image2 \
-    --enable-demuxer=apng --enable-demuxer=gif \
+    --enable-demuxer=apng --enable-demuxer=gif --enable-demuxer=concat \
   --disable-filters \
     --enable-filter=scale --enable-filter=thumbnail --enable-filter=silencedetect --enable-filter=ebur128 \
     --enable-filter=aresample --enable-filter=anull --enable-filter=null --enable-filter=copy \
+    --enable-filter=pad --enable-filter=fillborders \
   --disable-encoders \
-    --enable-encoder=libvpx_vp8 --enable-encoder=libvpx_vp9 --enable-encoder=png --enable-encoder=null \
-    --enable-encoder=wrapped_avframe --enable-encoder=pcm_s16le \
+    --enable-encoder=libvpx_vp8 --enable-encoder=libvpx_vp9 --enable-encoder=libx264 --enable-encoder=libx265 --enable-encoder=libsvtav1 \
+    --enable-encoder=png --enable-encoder=null --enable-encoder=wrapped_avframe --enable-encoder=pcm_s16le \
   --disable-decoders \
     --enable-decoder=vp8 --enable-decoder=vp9 --enable-decoder=h264 --enable-decoder=hevc --enable-decoder=libdav1d \
     --enable-decoder=mpeg4 --enable-decoder=mjpeg --enable-decoder=png --enable-decoder=apng --enable-decoder=gif \
@@ -164,10 +186,10 @@ ARG FFMPEG_BUILD_OPTIONS="\
 
 RUN <<EOS
   apt-get install -y --no-install-recommends $FFMPEG_BUILD_DEPS
-  curl -L $FFMPEG_URL | tar --strip-components=1 -xzvf -
+  curl -L "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz" | tar --strip-components=1 -xzvf -
 
   ./configure $FFMPEG_BUILD_OPTIONS
-  make -j install
+  make -j$JOBS install
 
   rm -rf * /usr/local/include /usr/local/share
 
@@ -180,14 +202,15 @@ EOS
 
 # Build ExifTool. Output is in /usr/local.
 FROM build-base AS build-exiftool
+ARG JOBS
+ARG EXIFTOOL_VERSION
 ARG EXIFTOOL_BUILD_DEPS="perl perl-modules-5.38 libarchive-zip-perl"
-ARG EXIFTOOL_URL
 RUN <<EOS
   apt-get install -y --no-install-recommends $EXIFTOOL_BUILD_DEPS
-  curl -L $EXIFTOOL_URL | tar --strip-components=1 -xzvf -
+  curl -L "https://github.com/exiftool/exiftool/archive/refs/tags/${EXIFTOOL_VERSION}.tar.gz" | tar --strip-components=1 -xzvf -
 
   perl Makefile.PL
-  make -j install
+  make -j$JOBS install
 
   rm -rf * /usr/local/man /usr/local/share/**/*.pod
 
@@ -201,7 +224,8 @@ EOS
 
 # Build OpenResty. Output is in /usr/local.
 FROM build-base AS build-openresty
-ARG OPENRESTY_URL
+ARG JOBS
+ARG OPENRESTY_VERSION
 ARG OPENRESTY_BUILD_DEPS="libssl-dev libpcre3-dev zlib1g-dev"
 ARG OPENRESTY_BUILD_OPTIONS="\
  --with-threads --with-compat --with-pcre-jit --with-file-aio \
@@ -212,10 +236,10 @@ ARG OPENRESTY_BUILD_OPTIONS="\
 
 RUN <<EOS
   apt-get install -y --no-install-recommends $OPENRESTY_BUILD_DEPS
-  curl -L $OPENRESTY_URL | tar --strip-components=1 -xzvf -
+  curl -L "https://openresty.org/download/openresty-${OPENRESTY_VERSION}.tar.gz" | tar --strip-components=1 -xzvf -
 
-  ./configure -j$(nproc) --prefix=/usr/local $OPENRESTY_BUILD_OPTIONS
-  make -j install
+  ./configure -j$JOBS --prefix=/usr/local $OPENRESTY_BUILD_OPTIONS
+  make -j$JOBS install
 
   find /usr/local -type f -executable -exec strip --strip-unneeded {} \;
   rm -rf * /usr/local/{site,pod,COPYRIGHT}
@@ -228,22 +252,25 @@ EOS
 # Install NodeJS. Output is in /usr/local.
 FROM build-base AS build-node
 ARG NODE_VERSION
+ARG TARGETARCH
 RUN <<EOS
-  apt-get install -y --no-install-recommends gpg python3
-  rm -rf /usr/local/*
+  apt-get install -y --no-install-recommends xz-utils
 
-  curl https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor > /usr/share/keyrings/nodesource.gpg
-  echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_VERSION nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  case "$TARGETARCH" in
+    amd64) NODE_ARCH="x64" ;;
+    arm64) NODE_ARCH="arm64" ;;
+    *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;;
+  esac
 
-  apt-get update
-  apt-get download nodejs
-  dpkg --instdir=/build --force-all --install ./nodejs*.deb
-  mv -i usr/bin usr/lib /usr/local
+  curl -L "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" | tar --strip-components=1 -xJvf -
 
+  cp -rdv ./bin /usr/local
+  cp -rdv ./lib /usr/local
   find /usr/local -type f -executable -exec strip --strip-unneeded {} \;
-  rm -rf *
+  rm -rf ./*
 
   node --version
+  npm --version
 EOS
 
 
@@ -263,8 +290,10 @@ RUN <<EOS
 EOS
 
 COPY --link Gemfile Gemfile.lock ./
+
+ARG JOBS
 RUN <<EOS
-  BUNDLE_FROZEN=1 bundle install --no-cache --jobs $(nproc)
+  BUNDLE_FROZEN=1 bundle install --no-cache --jobs $JOBS
 
   cd $GEM_HOME
   find . -regextype egrep -regex '.*\.(o|a|c|h|hh|hpp|exe|java|md|po|log|out|gem|rdoc)$' -delete
@@ -281,8 +310,8 @@ WORKDIR /danbooru
 COPY --link package.json package-lock.json ./
 
 RUN <<EOS
-  mkdir -p node_modules public/packs
-  chown danbooru:danbooru /danbooru node_modules public/packs
+  mkdir -p node_modules public/packs public/packs-dev
+  chown danbooru:danbooru /danbooru node_modules public/packs public/packs-dev
 EOS
 
 USER danbooru
@@ -292,12 +321,13 @@ COPY --link postcss.config.js babel.config.json ./
 COPY --link config/shakapacker.yml ./config/
 COPY --link config/webpack/ ./config/webpack/
 COPY --link public/images ./public/images
+COPY --link public/logos ./public/logos
 COPY --link public/fonts ./public/fonts
 COPY --link app/components/ ./app/components
 COPY --link app/javascript/ ./app/javascript
 
 RUN <<EOS
-  npx webpack --mode production -c config/webpack/webpack.config.js
+  RAILS_ENV=production NODE_ENV=production npx webpack --mode production -c config/webpack/webpack.config.js
   rm -f public/packs/**/*.{gz,br}
 EOS
 
@@ -375,13 +405,13 @@ ENV DOCKER_IMAGE_BUILD_DATE=$DOCKER_IMAGE_BUILD_DATE
 
 
 
-# The development layer. Contains the production layer, plus enables passwordless sudo and includes nodejs
-# and node_modules so that JS/CSS files can be rebuilt.
+# The development layer. Contains the production layer, plus enables passwordless sudo, includes nodejs and node_modules
+# for building JS/CSS files, and includes tools and libraries needed for building certain Ruby gems.
 FROM danbooru-base AS development
 
 RUN <<EOS
   apt-get update
-  apt-get install -y --no-install-recommends g++ make ragel=6.10-4 git sudo gpg socat
+  apt-get install -y --no-install-recommends g++ make ragel=6.10-4 git sudo gpg socat libyaml-dev libpq-dev gh
 
   groupadd admin -U danbooru
   passwd -d danbooru
@@ -400,5 +430,25 @@ ARG DOCKER_IMAGE_REVISION=""
 ARG DOCKER_IMAGE_BUILD_DATE=""
 ENV DOCKER_IMAGE_REVISION=$DOCKER_IMAGE_REVISION
 ENV DOCKER_IMAGE_BUILD_DATE=$DOCKER_IMAGE_BUILD_DATE
+
+ARG RUBY_VERSION
+ARG RUBY_MAJOR_VERSION
+ARG MOZJPEG_VERSION
+ARG VIPS_VERSION
+ARG FFMPEG_VERSION
+ARG EXIFTOOL_VERSION
+ARG OPENRESTY_VERSION
+ARG NODE_VERSION
+ARG UBUNTU_VERSION
+
+ENV RUBY_VERSION=$RUBY_VERSION
+ENV RUBY_MAJOR_VERSION=$RUBY_MAJOR_VERSION
+ENV MOZJPEG_VERSION=$MOZJPEG_VERSION
+ENV VIPS_VERSION=$VIPS_VERSION
+ENV FFMPEG_VERSION=$FFMPEG_VERSION
+ENV EXIFTOOL_VERSION=$EXIFTOOL_VERSION
+ENV OPENRESTY_VERSION=$OPENRESTY_VERSION
+ENV NODE_VERSION=$NODE_VERSION
+ENV UBUNTU_VERSION=$UBUNTU_VERSION
 
 USER danbooru

@@ -5,7 +5,7 @@ module Source
   class Extractor
     class Behance < Source::Extractor
       def self.enabled?
-        Danbooru.config.behance_session_cookie.present?
+        SiteCredential.for_site("Behance").present?
       end
 
       def image_urls
@@ -23,10 +23,14 @@ module Source
       def image_urls_from_module(mod)
         case mod["__typename"]
         in "ImageModule"
-          [mod.dig("imageSizes", "size_original", "url")].compact
+          url = mod.dig(:imageSizes, :allAvailable)&.max_by { |i| i[:width].to_i }&.dig(:url)
+          url = Source::URL.parse(url).try(:full_image_url) || url
+          [url].compact
         in "MediaCollectionModule"
-          urls = mod["components"].to_a.pluck("imageSizes").pluck("size_max_1200").pluck("url")
-          urls.map { |url| Source::URL.parse(url).try(:full_image_url) || url }
+          mod[:components].to_a.pluck(:imageSizes).pluck(:allAvailable).map do |images|
+            url = images.max_by { |image| image[:width].to_i * image[:height].to_i }&.dig(:url)
+            Source::URL.parse(url).try(:full_image_url) || url
+          end
         else
           []
         end
@@ -41,7 +45,7 @@ module Source
       end
 
       def username
-        project.dig("creator", "username")
+        Source::URL.parse(profile_url)&.username
       end
 
       def profile_url
@@ -57,7 +61,38 @@ module Source
       end
 
       def dtext_artist_commentary_desc
-        DText.from_plaintext(artist_commentary_desc)
+        dtext = [DText.from_plaintext(artist_commentary_desc)]
+
+        if project["modules"]&.any? { |mod| mod["__typename"].in?(%w[TextModule EmbedModule]) }
+          dtext += project[:modules].to_a.map do |mod|
+            case mod["__typename"]
+            in "TextModule"
+              DText.from_html(mod[:text], base_url: "https://www.behance.net") do |element|
+                case element.name
+                in "div" unless element.at("div").present?
+                  element.name = "p"
+                else
+                  nil
+                end
+              end
+            in "EmbedModule"
+              DText.from_html(mod[:originalEmbed], base_url: "https://www.behance.net") do |element|
+                if element.name == "iframe"
+                  element.name = "p"
+                  element.inner_html = %{<a href="#{element["src"]}">#{element["src"]}</a>}
+                end
+              end
+            in "ImageModule" | "MediaCollectionModule"
+              image_urls_from_module(mod).map do |url|
+                %{"[image]":[#{url}]}
+              end.join("\n")
+            else
+              ""
+            end
+          end
+        end
+
+        dtext.join("\n\n").strip
       end
 
       def tags
@@ -72,11 +107,15 @@ module Source
 
       memoize def page
         url = parsed_url.page_url || parsed_referer&.page_url
-        http.cookies(ilo0: true, iat0: Danbooru.config.behance_session_cookie).cache(1.minute).parsed_get(url)
+        parsed_get(url)
       end
 
       memoize def api_response
         page&.at("script#beconfig-store_state")&.text&.parse_json || {}
+      end
+
+      def http
+        super.cookies(ilo0: true, iat0: credentials[:session_cookie])
       end
     end
   end

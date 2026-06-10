@@ -25,31 +25,29 @@ class FavoriteGroupsController < ApplicationController
     respond_with(@favorite_group)
   end
 
+  def edit
+    @favorite_group = authorize FavoriteGroup.find(params[:id])
+    respond_with(@favorite_group)
+  end
+
   def create
     @favorite_group = authorize FavoriteGroup.new(creator: CurrentUser.user, **permitted_attributes(FavoriteGroup))
     @favorite_group.save
     respond_with(@favorite_group)
   end
 
-  def edit
-    @favorite_group = authorize FavoriteGroup.find(params[:id])
-    respond_with(@favorite_group)
-  end
-
   def update
     @favorite_group = authorize FavoriteGroup.find(params[:id])
     @favorite_group.update(permitted_attributes(@favorite_group))
-    unless @favorite_group.errors.any?
-      flash[:notice] = "Favorite group updated"
-    end
-    respond_with(@favorite_group)
+
+    respond_with(@favorite_group, notice: "Favorite group updated")
   end
 
   def destroy
     @favorite_group = authorize FavoriteGroup.find(params[:id])
     @favorite_group.destroy!
-    flash[:notice] = "Favorite group deleted" if request.format.html?
-    respond_with(@favorite_group, location: favorite_groups_path(search: { creator_name: CurrentUser.user.name }))
+
+    respond_with(@favorite_group, notice: "Favorite group deleted", location: favorite_groups_path(search: { creator_name: CurrentUser.user.name }))
   end
 
   def add_post

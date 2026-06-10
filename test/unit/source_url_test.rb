@@ -1,4 +1,4 @@
-require 'test_helper'
+require "test_helper"
 
 class SourceURLTest < ActiveSupport::TestCase
   context "Source::URL" do
@@ -36,7 +36,7 @@ class SourceURLTest < ActiveSupport::TestCase
 
     context "the == operator" do
       should "compare URLs strictly" do
-        assert(Source::URL.parse("http://google.com") == Source::URL.parse("http://google.com"))
+        assert(Source::URL.parse("http://google.com") == Source::URL.parse("http://google.com")) # rubocop:disable Lint/BinaryOperatorWithIdenticalOperands
 
         assert(Source::URL.parse("http://google.com")   != Danbooru::URL.parse("http://google.com"))
         assert(Danbooru::URL.parse("http://google.com") != Source::URL.parse("http://google.com"))
@@ -55,7 +55,8 @@ class SourceURLTest < ActiveSupport::TestCase
 
     context "the === operator" do
       should "compare URLs loosely" do
-        assert(Source::URL.parse("http://google.com") === Source::URL.parse("http://google.com"))
+        # rubocop:disable Style/CaseEquality
+        assert(Source::URL.parse("http://google.com") === Source::URL.parse("http://google.com")) # rubocop:disable Lint/BinaryOperatorWithIdenticalOperands
 
         assert(Source::URL.parse("http://google.com")   === Danbooru::URL.parse("http://google.com"))
         assert(Danbooru::URL.parse("http://google.com") === Source::URL.parse("http://google.com"))
@@ -70,6 +71,28 @@ class SourceURLTest < ActiveSupport::TestCase
         assert_not(Source::URL.parse("http://google.com") === Source::URL.parse("http://google.com?"))
         assert_not(Source::URL.parse("http://google.com") === Source::URL.parse("http://google.com#"))
         assert_not(Source::URL.parse("http://google.com") === Source::URL.parse("http://user:pass@google.com#"))
+        # rubocop:enable Style/CaseEquality
+      end
+    end
+
+    context "the #with method" do
+      should "work" do
+        assert_equal("http://google.com/image.jpg?foo=baz", Source::URL.parse("http://google.com/image.jpg?foo=bar").with_params(foo: "baz").to_s)
+        assert_equal("http://google.com/image.jpg?foo=", Source::URL.parse("http://google.com/image.jpg?foo=bar").with_params(foo: "").to_s)
+        assert_equal("http://google.com/image.jpg", Source::URL.parse("http://google.com/image.jpg?foo=bar").with_params(foo: nil).to_s)
+
+        assert_equal("https://example.com/image.jpg?foo=bar", Source::URL.parse("http://google.com/image.jpg?foo=bar").with(site: "https://example.com").to_s)
+        assert_equal("http://google.com/image.png?foo=bar", Source::URL.parse("http://google.com/image.jpg?foo=bar").with(file_ext: "png").to_s)
+        assert_equal("http://google.com/test.jpg?foo=bar", Source::URL.parse("http://google.com/image.jpg?foo=bar").with(filename: "test").to_s)
+        assert_equal("http://google.com/test.png?foo=bar", Source::URL.parse("http://google.com/image.jpg?foo=bar").with(basename: "test.png").to_s)
+      end
+    end
+
+    context "the #escape method" do
+      should "work" do
+        assert_equal("fate%2Fstay_night", Source::URL.escape("fate/stay_night"))
+        assert_equal("大丈夫%3Fおっぱい揉む%3F", Source::URL.escape("大丈夫?おっぱい揉む?"))
+        assert_equal("", Source::URL.escape(nil))
       end
     end
   end

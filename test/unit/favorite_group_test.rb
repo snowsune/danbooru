@@ -1,7 +1,7 @@
-require 'test_helper'
+require "test_helper"
 
 class FavoriteGroupTest < ActiveSupport::TestCase
-  def setup
+  setup do
     @fav_group = create(:favorite_group)
   end
 
@@ -53,7 +53,7 @@ class FavoriteGroupTest < ActiveSupport::TestCase
       post = create(:post)
 
       @fav_group.add(post)
-      assert(@fav_group.valid?)
+      assert_equal(true, @fav_group.valid?)
       assert_equal([post.id], @fav_group.reload.post_ids)
 
       @fav_group.add(post)
@@ -63,20 +63,25 @@ class FavoriteGroupTest < ActiveSupport::TestCase
       assert_equal([post.id], @fav_group.reload.post_ids)
 
       @fav_group.reload.update(post_ids: [post.id, post.id])
-      refute(@fav_group.valid?)
+      assert_equal(false, @fav_group.valid?)
       assert_equal([post.id], @fav_group.reload.post_ids)
     end
 
     should "not allow adding nonexistent posts" do
       @fav_group.update(post_ids: [0])
 
-      refute(@fav_group.valid?)
+      assert_equal(false, @fav_group.valid?)
       assert_equal([], @fav_group.reload.post_ids)
     end
   end
 
   context "when validating names" do
     subject { build(:favorite_group) }
+
+    should normalize_attribute(:name).from("  A  B  ").to("A_B")
+    should normalize_attribute(:name).from("__A__B__").to("A_B")
+    should normalize_attribute(:name).from(" _A\t\r\n\u3000_\nB_ ").to("A_B")
+    should normalize_attribute(:name).from("pokémon".unicode_normalize(:nfd)).to("pokémon".unicode_normalize(:nfc))
 
     should_not allow_value("foo,bar").for(:name)
     should_not allow_value("foo*bar").for(:name)
@@ -87,5 +92,6 @@ class FavoriteGroupTest < ActiveSupport::TestCase
     should_not allow_value("").for(:name)
     should_not allow_value("   ").for(:name)
     should_not allow_value("\u200B").for(:name)
+    should_not allow_value("x" * 171).for(:name)
   end
 end

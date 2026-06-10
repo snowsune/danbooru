@@ -1,8 +1,10 @@
-require 'test_helper'
+require "test_helper"
 
 class EmailAddressTest < ActiveSupport::TestCase
   context "EmailAddress" do
     context "validation" do
+      subject { build(:email_address) }
+
       should allow_value("foo@gmail.com").for(:address)
       should allow_value("FOO@gmail.com").for(:address)
       should allow_value("foo@GMAIL.com").for(:address)
@@ -17,10 +19,15 @@ class EmailAddressTest < ActiveSupport::TestCase
       should_not allow_value("foo@example").for(:address)
       should_not allow_value("fooqq@.com").for(:address)
       should_not allow_value('foo"bar"@gmail.com').for(:address)
-      should_not allow_value('foo<bar>@gmail.com').for(:address)
+      should_not allow_value("foo<bar>@gmail.com").for(:address)
       should_not allow_value("foo@foo.-bar.com").for(:address)
       should_not allow_value("foo@127.0.0.1").for(:address)
       should_not allow_value("foo@localhost").for(:address)
+      should_not allow_value("#{"x" * 100}@example.com").for(:address)
+
+      should allow_value("webmaster@danbooru.donmai.us").for(:address).on(:deliverable) # valid MX record
+      should_not allow_value("nobody@betabooru.donmai.us").for(:address).on(:deliverable) # no MX record
+      should_not allow_value("nobody@invalid.donmai.us").for(:address).on(:deliverable) # domain doesn't exist
     end
 
     context "normalization" do

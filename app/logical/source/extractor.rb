@@ -14,6 +14,8 @@
 # * display_name - The artist's display name, if they have one.
 # * username - The artist's username, if they have one.
 # * other_names - Extra names used in new artist entries.
+# * published_at - The time that this URL was first published at the source.
+# * updated_at - The time that this URL was last updated at the source.
 # * tags - The artist's tags for the work. Used by translated tags.
 # * artist_commentary_title - The artist's title of the work. Used for artist commentaries.
 # * artist_commentary_desc - The artist's description of the work. Used for artist commentaries.
@@ -25,7 +27,7 @@ module Source
     # The http timeout to download a file.
     DOWNLOAD_TIMEOUT = 60
 
-    attr_reader :url, :referer_url, :parsed_url, :parsed_referer, :parent_extractor, :options
+    attr_reader :url, :referer_url, :parsed_url, :parsed_referer, :parent_extractor, :default_credentials, :options
 
     delegate :site_name, to: :parsed_url
 
@@ -59,11 +61,13 @@ module Source
     # @param url [Source::URL, String] The URL to extract information form.
     # @param referer_url [Source::URL, String, nil] The page URL if `url` is an image URL.
     # @param parent_extractor [Source::Extractor, nil] The parent of this extractor, if this is a sub extractor.
+    # @param credentials [Hash<String, String>] The credentials to use for this site (optional). If present, overrides any credentials from the database or config.
     # @param options [Hash] Additional extractor-specific options to pass to the extractor.
-    def initialize(url, referer_url: nil, parent_extractor: nil, **options)
+    def initialize(url, referer_url: nil, parent_extractor: nil, credentials: {}, **options)
       @url = url.to_s
       @referer_url = referer_url&.to_s
       @parent_extractor = parent_extractor
+      @default_credentials = credentials
       @options = options
 
       @parsed_url = Source::URL.parse(url)
@@ -129,7 +133,7 @@ module Source
     #
     # @return [String, nil]
     def artist_name
-      display_name || username
+      display_name.presence || username
     end
 
     # The artists's display name, if the site has display names.
@@ -212,18 +216,73 @@ module Source
     #
     # @return [MediaFile] the downloaded file
     def download_file!(download_url)
-      response, file = http_downloader.download_media(download_url)
+      _response, file = http_downloader.download_media(download_url)
       file
     end
 
-    # A http client for API requests.
-    def http
+    # @return [Danbooru::Http] The HTTP client to use for API or HTML requests. Extractors can override this to add custom headers or cookies.
+    memoize def http
       Danbooru::Http.external
     end
 
-    # A http client for downloading files.
-    def http_downloader
-      http.timeout(DOWNLOAD_TIMEOUT).max_size(Danbooru.config.max_file_size).use(:spoof_referrer).use(:unpolish_cloudflare)
+    # @return [Danbooru::Http] The HTTP client to use for downloading files. Extractors can override this to add custom headers or cookies.
+    memoize def http_downloader
+      http.timeout(DOWNLOAD_TIMEOUT).max_size(MediaAsset::MAX_FILE_SIZE).use(:spoof_referrer).use(:unpolish_cloudflare)
+    end
+
+    # Fetch the given URL and return the parsed response, or nil on a non-2xx response. Also tracks whether the
+    # credentials succeeded or failed if the site uses credentials.
+    #
+    # @param url [String] The URL to fetch.
+    # @param cache [ActiveSupport::Duration] The duration to cache the response for. Defaults to 1 minute.
+    # @param params [Hash] The query params for the URL.
+    # @return [Object, nil] The parsed response. For HTML requests this will be a Nokogiri document; for JSON or XML
+    #   requests it will be a hash or array. If the request fails, returns nil.
+    def parsed_get(url, cache: 1.minute, params: {})
+      return nil if url.blank?
+
+      response = http.cache(cache).get(url, params: params)
+      update_credentials!(response)
+
+      response.parse if response.status.success?
+    end
+
+    # Called after each HTTP request to track whether the credentials succeeded or failed. Extractors can override this
+    # to customize how errors are handled.
+    #
+    # @param response [HTTP::Response] The response from the HTTP request.
+    def update_credentials!(response)
+      return if site_credential.nil?
+
+      if response.status == 429
+        site_credential.error!(:rate_limited)
+      else
+        site_credential.success!
+      end
+    end
+
+    # @return [Array<SiteCredential>] All credentials available for this site. May be empty if none are configured or working.
+    #   May be overriden by extractors to filter out rate-limited credentials. Credentials are taken from the constructor,
+    #   the environment, the config file, or the database, in that order.
+    memoize def site_credentials
+      if default_credentials.present?
+        SiteCredential.for_site(site_name, default_credentials: default_credentials)
+      else
+        SiteCredential.for_site(site_name)
+      end
+    end
+
+    # @return [SiteCredential, nil] Which credential to use for this site. May be nil if none are configured or working.
+    #   Extractors can override this to pick the best credential if multiple are available. The default is to choose the
+    #   least recently used credential.
+    memoize def site_credential
+      site_credentials.min_by { |c| c.last_used_at.to_i }
+    end
+
+    # @return [Hash<String, String>] A hash containing the credentials to use for this site. The format of this hash is
+    #   different for each site; see models/site_credential.rb to see what it contains.
+    memoize def credentials
+      site_credential&.credential&.with_indifferent_access || {}
     end
 
     # Find the artist(s) associated with this source URL. For known sites (e.g., art platforms shared by many artists),
@@ -248,8 +307,16 @@ module Source
       Artist.new(
         name: tag_name,
         other_names: other_names,
-        url_string: profile_urls.join("\n")
+        url_string: profile_urls.join("\n"),
       )
+    end
+
+    def published_at
+      nil
+    end
+
+    def updated_at
+      nil
     end
 
     def tags
@@ -257,11 +324,7 @@ module Source
     end
 
     def normalized_tags
-      tags.map { |tag, _url| normalize_tag(tag) }.sort.uniq
-    end
-
-    def normalize_tag(tag)
-      WikiPage.normalize_other_name(tag).downcase
+      tags.flat_map { |tag, _url| TagNormalizer.normalize(tag) }.sort.uniq
     end
 
     def translated_tags
@@ -305,7 +368,7 @@ module Source
     end
 
     def related_posts(limit = 5)
-      Post.system_tag_match(related_posts_search_query).paginate(1, limit: limit)
+      Post.system_tag_match(related_posts_search_query).paginate(1, limit: limit, page_limit: limit)
     end
 
     # A hash containing the results of any API calls made by the extractor. For debugging purposes only.
@@ -323,6 +386,8 @@ module Source
           profile_urls: profile_urls,
           artists: artists.as_json(only: %i[id name]),
         },
+        published_at: published_at,
+        updated_at: updated_at,
         tags: tags,
         artist_commentary: {
           title: artist_commentary_title,
@@ -342,6 +407,11 @@ module Source
       http_downloader.head(url).status.success?
     end
 
+    # @return [Array<Source::Extractor>] Return the list of image URL extractors.
+    def image_sources
+      image_urls.map { |image_url| Source::Extractor.find(image_url, parent_extractor: self) }
+    end
+
     # @return [Enumerator] An enumerator that lets you iterate across the chain of parent extractors.
     def each_parent
       return enum_for(:each_parent) unless block_given?
@@ -359,7 +429,7 @@ module Source
     end
 
     memoize def test_case
-      file_sizes = image_urls.filter_map do |url|
+      file_sizes = image_urls.filter_map do |url| # rubocop:disable Lint/UselessAssignment
         response = http_downloader.head(url)
         file_size = response["Content-Length"] || "0"
         file_size = "0" if !response.status.in?(200..299)
@@ -381,13 +451,28 @@ module Source
             <%= image_urls.join("\n    ") %>
           ],
           media_files: [
-            <%= file_sizes.join(",\n    ") %>
+            <%= file_sizes.join(",\n    ") %>,
           ],
         <% end %>
           page_url: <%= page_url.inspect %>,
+          profile_url: <%= profile_url.inspect %>,
+        <% if profile_urls.empty? %>
+          profile_urls: [],
+        <% else %>
           profile_urls: %w[<%= profile_urls.join(" ") %>],
+        <% end %>
           display_name: <%= display_name.inspect %>,
           username: <%= username.inspect %>,
+        <% if published_at.nil? %>
+          published_at: nil,
+        <% else %>
+          published_at: Time.parse(<%= published_at.iso8601(fraction_digits=6).inspect %>),
+        <% end %>
+        <% if updated_at.nil? %>
+          updated_at: nil,
+        <% else %>
+          updated_at: Time.parse(<%= updated_at.iso8601(fraction_digits=6).inspect %>),
+        <% end %>
         <% if tags.empty? %>
           tags: [],
         <% else %>
@@ -396,10 +481,12 @@ module Source
           ],
         <% end %>
           dtext_artist_commentary_title: <%= dtext_artist_commentary_title.inspect %>,
-        <% if dtext_artist_commentary_desc.lines.size <= 1 %>
-          dtext_artist_commentary_desc: <%= dtext_artist_commentary_desc.inspect %>
+        <% if dtext_artist_commentary_desc.nil? -%>
+          dtext_artist_commentary_desc: nil,
+        <% elsif dtext_artist_commentary_desc.lines.size <= 1 %>
+          dtext_artist_commentary_desc: <%= dtext_artist_commentary_desc.inspect %>,
         <% else %>
-          dtext_artist_commentary_desc: <<~EOS.chomp
+          dtext_artist_commentary_desc: <<~EOS.chomp,
         <%= dtext_artist_commentary_desc.to_s.gsub(/^/, "    ") %>
           EOS
         <% end %>
@@ -419,11 +506,11 @@ module Source
     end
 
     def inspect
-      variables = instance_values.reject { |key, _| key.starts_with?("_memoized") }.compact_blank
+      variables = instance_values.reject { |key, _| key.starts_with?("_memoized") || key == "sub_extractor" }.compact_blank
       state = variables.map { |name, value| "@#{name}=#{value.inspect}" }.join(" ")
       "#<#{self.class.name} #{state}>"
     end
 
-    memoize :http, :http_downloader, :related_posts
+    memoize :related_posts
   end
 end

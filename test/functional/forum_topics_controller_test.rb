@@ -1,26 +1,22 @@
-require 'test_helper'
+require "test_helper"
 
 class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
   def default_search_order(items)
-    ->{ items.each { |val| val.reload }.sort_by(&:updated_at).reverse }
+    -> { items.each(&:reload).sort_by(&:updated_at).reverse }
   end
 
   context "The forum topics controller" do
     setup do
       @user = create(:user)
       @other_user = create(:user)
-      @mod = create(:moderator_user, name: "okuu")
+      @mod = create(:moderator_user)
 
-      as(@user) do
-        @forum_topic = create(:forum_topic, creator: @user, title: "my forum topic", original_post: build(:forum_post, creator: @user, topic: @forum_topic, body: "xxx"))
-      end
+      @forum_topic = create(:forum_topic, creator: @user, title: "my forum topic", original_post: build(:forum_post, creator: @user, topic: @forum_topic, body: "xxx"))
     end
 
     context "for a level restricted topic" do
       setup do
-        as(@mod) do
-          @forum_topic.update(min_level: User::Levels::MODERATOR)
-        end
+        @forum_topic.update(min_level: User::Levels::MODERATOR, updater: @mod)
       end
 
       should "not allow users to see the topic" do
@@ -32,28 +28,17 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
         @gold_user = create(:gold_user)
 
         # An open topic should bump...
-        @open_topic = as(@gold_user) { create(:forum_topic, creator: @gold_user) }
-        @gold_user.reload
-        as(@gold_user) do
-          assert(@gold_user.has_forum_been_updated?)
-        end
+        @open_topic = create(:forum_topic, creator: @gold_user)
+        assert_equal(true, @gold_user.reload.has_forum_been_updated?)
 
         # Marking it as read should clear it...
-        as(@gold_user) do
-          post_auth mark_all_as_read_forum_topics_path, @gold_user
-        end
-        @gold_user.reload
+        post_auth mark_all_as_read_forum_topics_path, @gold_user
         assert_redirected_to(forum_topics_path)
-        as(@gold_user) do
-          assert(!@gold_user.has_forum_been_updated?)
-        end
+        assert_equal(false, @gold_user.reload.has_forum_been_updated?)
 
         # Then adding an unread private topic should not bump.
-        as(@mod) { create(:forum_post, topic: @forum_topic, creator: @mod) }
-        @gold_user.reload
-        as(@gold_user) do
-          assert_equal(false, @gold_user.has_forum_been_updated?)
-        end
+        create(:forum_post, topic: @forum_topic, creator: @mod)
+        assert_equal(false, @gold_user.reload.has_forum_been_updated?)
       end
     end
 
@@ -70,18 +55,18 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
       end
 
       should "not record a topic visit for non-html requests" do
-        get_auth forum_topic_path(@forum_topic), @user, params: {format: :json}
+        get_auth forum_topic_path(@forum_topic), @user, params: { format: :json }
         @user.reload
         assert_equal(Time.zone.parse("1960-01-01"), @user.last_forum_read_at)
       end
 
       should "render for atom feed" do
-        get forum_topic_path(@forum_topic), params: {:format => :atom}
+        get forum_topic_path(@forum_topic), params: { format: :atom }
         assert_response :success
       end
 
       should "raise an error if the user doesn't have permission to view the topic" do
-        as(@user) { @forum_topic.update(min_level: User::Levels::ADMIN) }
+        @forum_topic.update(min_level: User::Levels::ADMIN, updater: @user)
         get_auth forum_topic_path(@forum_topic), @user
 
         assert_response 403
@@ -90,12 +75,10 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
 
     context "index action" do
       setup do
-        as(@user) do
-          @sticky_topic = create(:forum_topic, is_sticky: true, creator: @user, original_post: build(:forum_post))
-          @other_topic = create(:forum_topic, creator: @user, original_post: build(:forum_post))
-        end
-        @mod_topic = as(@mod) { create(:forum_topic, creator: @mod, min_level: User::Levels::MODERATOR, original_post: build(:forum_post)) }
-        create(:bulk_update_request, forum_topic: @forum_topic)
+        @sticky_topic = create(:forum_topic, is_sticky: true, creator: @user, original_post: build(:forum_post, creator: @user))
+        @other_topic = create(:forum_topic, creator: @user, original_post: build(:forum_post, creator: @user))
+        @mod_topic = create(:forum_topic, creator: @mod, min_level: User::Levels::MODERATOR, original_post: build(:forum_post, creator: @user))
+        create(:bulk_update_request, user: @mod, forum_topic: @forum_topic)
         create(:tag_alias, forum_topic: @other_topic)
       end
 
@@ -108,13 +91,12 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
       end
 
       should "not list stickied topics first for JSON responses" do
-        get forum_topics_path, params: {format: :json}
-        forum_topics = JSON.parse(response.body)
-        assert_equal(default_search_order([@other_topic, @sticky_topic, @forum_topic]).call.map(&:id), forum_topics.map {|t| t["id"]})
+        get forum_topics_path, params: { format: :json }
+        assert_equal([@forum_topic, @other_topic, @sticky_topic].map(&:id), response.parsed_body.pluck(:id))
       end
 
       should "render for atom feed" do
-        get forum_topics_path, params: {:format => :atom}
+        get forum_topics_path, params: { format: :atom }
         assert_response :success
       end
 
@@ -125,7 +107,7 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
       end
 
       should "not show deleted topics for HTML responses by default" do
-        as(@user) { create(:forum_topic, is_deleted: true) }
+        create(:forum_topic, is_deleted: true)
         get forum_topics_path
 
         assert_response :success
@@ -135,7 +117,7 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
 
       context "with private topics" do
         should "not show private topics to unprivileged users" do
-          as(@user) { @other_topic.update!(min_level: User::Levels::MODERATOR) }
+          @other_topic.update!(min_level: User::Levels::MODERATOR, updater: @user)
           get forum_topics_path
 
           assert_response :success
@@ -144,7 +126,7 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
         end
 
         should "show private topics to privileged users" do
-          as(@user) { @other_topic.update!(min_level: User::Levels::MODERATOR) }
+          @other_topic.update!(min_level: User::Levels::MODERATOR, updater: @user)
           get_auth forum_topics_path, @mod
 
           assert_response :success
@@ -155,34 +137,45 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
 
       context "with search conditions" do
         context "as a user" do
-          setup do
-            CurrentUser.user = @user
-          end
+          forum_topics = respond_to_search.as_user { @user }
 
-          should respond_to_search({}).with { default_search_order([@sticky_topic, @other_topic, @forum_topic]) }
-          should respond_to_search(order: "id").with { [@other_topic, @sticky_topic, @forum_topic] }
-          should respond_to_search(title_matches: "forum").with { @forum_topic }
-          should respond_to_search(title_matches: "bababa").with { [] }
-          should respond_to_search(is_sticky: "true").with { @sticky_topic }
+          should forum_topics.search_params.with { [@sticky_topic, @other_topic, @forum_topic].reverse }
+          should forum_topics.search_params(order: "id").with { [@other_topic, @sticky_topic, @forum_topic] }
+          should forum_topics.search_params(title_matches: "forum").with { @forum_topic }
+          should forum_topics.search_params(title_matches: "bababa").with { [] }
+          should forum_topics.search_params(is_sticky: "true").with { @sticky_topic }
+          should forum_topics.search_params(category: "General").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(category: "general").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(category: "Tags").with { [] }
+          should forum_topics.search_params(category_id: "0").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(is_private: "true").with { [] }
+          should forum_topics.search_params(is_private: "false").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(min_level: "None").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(min_level: "none").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(min_level: "0").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(min_level: "Member").with { [] }
+          should forum_topics.search_params(min_level: "Moderator").with { [] }
+          should forum_topics.search_params(min_level_id: "<10").with { [@forum_topic, @other_topic, @sticky_topic] }
 
-          context "using includes" do
-            should respond_to_search(forum_posts: {body_matches: "xxx"}).with { @forum_topic }
-            should respond_to_search(has_bulk_update_requests: "true").with { @forum_topic }
-            should respond_to_search(has_tag_aliases: "true").with { @other_topic }
-            should respond_to_search(creator_name: "okuu").with { [] }
-          end
+          should forum_topics.search_params(forum_posts: { body_matches: "xxx" }).with { @forum_topic }
+          should forum_topics.search_params(has_bulk_update_requests: "true").with { @forum_topic }
+          should forum_topics.search_params(has_tag_aliases: "true").with { @other_topic }
+          should forum_topics.search_params(creator_name: -> { @mod.name }).with { [] }
         end
 
         context "as a moderator" do
-          setup do
-            CurrentUser.user = @mod
-          end
+          forum_topics = respond_to_search.as_user { @mod }
 
-          should respond_to_search({}).with { default_search_order([@sticky_topic, @other_topic, @mod_topic, @forum_topic]) }
-
-          context "using includes" do
-            should respond_to_search(creator_name: "okuu").with { @mod_topic }
-          end
+          should forum_topics.search_params.with { [@sticky_topic, @other_topic, @mod_topic, @forum_topic].reverse }
+          should forum_topics.search_params(is_private: "false").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(is_private: "true").with { [@mod_topic] }
+          should forum_topics.search_params(min_level: "None").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(min_level: "Member").with { [] }
+          should forum_topics.search_params(min_level: "Moderator").with { [@mod_topic] }
+          should forum_topics.search_params(min_level: "0").with { [@forum_topic, @other_topic, @sticky_topic] }
+          should forum_topics.search_params(min_level: User::Levels::MODERATOR.to_s).with { [@mod_topic] }
+          should forum_topics.search_params(min_level_id: ">0").with { [@mod_topic] }
+          should forum_topics.search_params(creator_name: -> { @mod.name }).with { [@mod_topic] }
         end
       end
 
@@ -264,6 +257,24 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
 
         forum_topic = ForumTopic.last
         assert_redirected_to(forum_topic_path(forum_topic))
+        assert_equal(@user, forum_topic.creator)
+        assert_equal(@user, forum_topic.updater)
+        assert_equal(@user, forum_topic.original_post.creator)
+        assert_equal(@user, forum_topic.original_post.updater)
+      end
+
+      should "rate limit the creation of new forum topics" do
+        Danbooru.config.stubs(:rate_limits_enabled?).returns(true)
+
+        assert_difference(["ForumPost.count", "ForumTopic.count"], 1) do
+          post_auth forum_topics_path, @user, params: { forum_topic: { title: "test", original_post_attributes: { body: "test" }}}
+          assert_redirected_to forum_topic_path(ForumTopic.last)
+        end
+
+        assert_no_difference(["ForumPost.count", "ForumTopic.count"]) do
+          post_auth forum_topics_path, @user, params: { forum_topic: { title: "test", original_post_attributes: { body: "test" }}}
+          assert_response 429
+        end
       end
     end
 
@@ -273,6 +284,9 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
 
         assert_redirected_to forum_topic_path(@forum_topic)
         assert_equal(true, @forum_topic.reload.is_locked)
+        assert_equal(@mod, @forum_topic.updater)
+        assert_equal(@mod, @forum_topic.original_post.updater)
+        assert(ModAction.exists?(category: "forum_topic_lock", subject: @forum_topic, creator: @mod))
       end
 
       should "allow users to update their own topics" do
@@ -280,10 +294,12 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
 
         assert_redirected_to forum_topic_path(@forum_topic)
         assert_equal("test", @forum_topic.reload.title)
+        assert_equal(@user, @forum_topic.updater)
+        assert_equal(@user, @forum_topic.original_post.updater)
       end
 
       should "not allow users to update locked topics" do
-        as(@mod) { @forum_topic.update!(is_locked: true) }
+        @forum_topic.update!(is_locked: true, updater: create(:moderator_user))
         put_auth forum_topic_path(@forum_topic), @user, params: { forum_topic: { title: "test" }}
 
         assert_response 403
@@ -291,11 +307,13 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
       end
 
       should "allow mods to update locked topics" do
-        as(@mod) { @forum_topic.update!(is_locked: true) }
+        @forum_topic.update!(is_locked: true, updater: create(:moderator_user))
         put_auth forum_topic_path(@forum_topic), @mod, params: { forum_topic: { title: "test" }}
 
         assert_redirected_to forum_topic_path(@forum_topic)
         assert_equal("test", @forum_topic.reload.title)
+        assert_equal(@mod, @forum_topic.updater)
+        assert_equal(@mod, @forum_topic.original_post.updater)
       end
 
       should "allow users to update the OP" do
@@ -303,40 +321,36 @@ class ForumTopicsControllerTest < ActionDispatch::IntegrationTest
 
         assert_redirected_to forum_topic_path(@forum_topic)
         assert_equal("test", @forum_topic.original_post.reload.body)
+        assert_equal(@user, @forum_topic.updater)
+        assert_equal(@user, @forum_topic.original_post.updater)
       end
     end
 
     context "destroy action" do
-      setup do
-        as(@user) do
-          @post = create(:forum_post, topic: @forum_topic)
-        end
-      end
-
       should "mark the topic and all posts as deleted" do
+        @post = create(:forum_post, topic: @forum_topic, creator: @user)
         delete_auth forum_topic_path(@forum_topic), @mod
 
         assert_redirected_to(@forum_topic)
         assert_equal(true, @forum_topic.reload.is_deleted?)
-        assert_equal(true, @forum_topic.original_post.is_deleted?)
+        assert_equal(@mod, @forum_topic.updater)
         assert_equal(true, @forum_topic.forum_posts.all?(&:is_deleted?))
+        assert_equal(true, @forum_topic.forum_posts.all? { |post| post.updater == @mod })
+        assert(ModAction.exists?(category: "forum_topic_delete", subject: @forum_topic, creator: @mod))
       end
     end
 
     context "undelete action" do
-      setup do
-        as(@mod) do
-          @forum_topic.update(is_deleted: true)
-        end
-      end
-
       should "mark the topic and all posts as undeleted" do
+        @forum_topic.update!(is_deleted: true, updater: create(:moderator_user))
         post_auth undelete_forum_topic_path(@forum_topic), @mod
 
         assert_redirected_to(@forum_topic)
         assert_equal(false, @forum_topic.reload.is_deleted?)
-        assert_equal(false, @forum_topic.original_post.is_deleted?)
+        assert_equal(@mod, @forum_topic.updater)
         assert_equal(false, @forum_topic.forum_posts.all?(&:is_deleted?))
+        assert_equal(true, @forum_topic.forum_posts.all? { |post| post.updater == @mod })
+        assert(ModAction.exists?(category: "forum_topic_undelete", subject: @forum_topic, creator: @mod))
       end
     end
   end

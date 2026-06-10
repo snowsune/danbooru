@@ -48,6 +48,14 @@ module Source
         "https://www.weibo.com/#{artist_id}/#{illust_base62_id}" if artist_id.present? && illust_base62_id.present?
       end
 
+      def published_at
+        if parsed_url.image_url?
+          nil
+        elsif page_json[:created_at]
+          Time.strptime(page_json[:created_at], "%a %b %d %H:%M:%S %z %Y").utc
+        end
+      end
+
       def tags
         tags = page_json[:text]&.parse_html&.css(".surl-text").to_a.map(&:text).select { |text| text&.match?(/^\#.*\#$/) }
         tags.map do |tag|
@@ -118,7 +126,7 @@ module Source
       end
 
       memoize def page_json
-        html = http.cache(1.minute).parsed_get(mobile_page_url)
+        html = http.cookies(SUB: sub_cookie).cache(1.minute).parsed_get(mobile_page_url)
         html.to_s[/var \$render_data = \[(.*)\]\[0\]/m, 1]&.parse_json&.dig("status") || {}
       end
 
@@ -126,7 +134,7 @@ module Source
       # videos, since the mobile page doesn't return 1080p videos.
       memoize def post
         url = "https://www.weibo.com/ajax/statuses/show?id=#{illust_id}" if illust_id.present?
-        http.no_follow.cookies(SUB: sub_cookie).cache(1.minute).parsed_get(url) || {}
+        http.no_follow.cookies(SUB: sub_cookie).headers(Referer: "https://weibo.com/").cache(1.minute).parsed_get(url) || {}
       end
 
       # This `tid` value is tied to your IP and user agent.

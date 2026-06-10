@@ -26,17 +26,22 @@ class PostQuery
   alias_method :safe_mode?, :safe_mode
   alias_method :to_s, :to_infix
 
-  # Return a new PostQuery with aliases replaced.
-  def self.normalize(search, ...)
+  # @param search [String] The search string.
+  # @param apply_aliases [Boolean] Whether aliased tags should be resolved.
+  # @return [PostQuery] A new PostQuery for the search.
+  def self.normalize(search, apply_aliases: true, **options)
     search = search.to_s.strip
 
     # Optimize zero tag and single tag searches
     if search.blank?
-      PostQuery.new(AST.all, ...)
+      PostQuery.new(AST.all, **options)
     elsif search.match?(%r{\A[a-zA-Z0-9][a-zA-Z0-9();/+!?&'._~-]*\z}) && !search.downcase.in?(["and", "or"])
-      PostQuery.new(AST.tag(search), ...).replace_aliases
+      post_query = PostQuery.new(AST.tag(search), **options)
+      apply_aliases ? post_query.replace_aliases : post_query
     else
-      PostQuery.new(search, ...).replace_aliases.rewrite_opts.trim
+      post_query = PostQuery.new(search, **options)
+      post_query = post_query.replace_aliases if apply_aliases
+      post_query.rewrite_opts.trim
     end
   end
 
@@ -113,6 +118,11 @@ class PostQuery
     Tag.where(name: tag_names)
   end
 
+  # The only pool in the query, if the query contains a single pool.
+  def pool
+    Pool.find_by_name(find_metatag(:pool)) if is_single_pool?
+  end
+
   # True if this search would return all posts (normally because the search is the empty string).
   def is_empty_search?
     ast.all?
@@ -145,6 +155,10 @@ class PostQuery
   # True if the search contains a single tag. It may have other metatags or wildcards, and the tag may be negated.
   def has_single_tag?
     tag_names.one?
+  end
+
+  def is_single_pool?
+    is_metatag?(:pool)
   end
 
   # True if the search depends on the current user because of permissions or privacy settings.
@@ -311,12 +325,12 @@ class PostQuery
       return if is_empty_search? || is_simple_tag?
       return if metatags.empty?
 
-      order_metatags = select_metatags(*ORDER_METATAGS)
+      order_metatags = select_metatags(*ORDER_METATAGS).map(&:to_s).map(&:downcase).uniq
       raise Error, "#{order_metatags.to_sentence} can't be used together." if order_metatags.size > 1
 
       SINGLETON_METATAGS.each do |name|
         metatag = select_metatags(name).first
-        raise Error, "'#{name}:' can't be used more than once." if select_metatags(name).size > 1
+        raise Error, "'#{name}:' can't be used more than once." if select_metatags(name).map(&:to_s).map(&:downcase).uniq.size > 1
         raise Error, "'#{metatag}' can't be negated." if metatag&.parents&.any?(&:not?)
         raise Error, "'#{metatag}' can't be used with the 'or' operator." if metatag&.parents&.any?(&:or?)
       end
@@ -324,7 +338,12 @@ class PostQuery
 
     # The number of unique tags, wildcards, and metatags in the search, excluding metatags that don't count against the user's tag limit.
     def term_count
-      tag_names.size + wildcards.size + metatags.count { !_1.name.in?(UNLIMITED_METATAGS) }
+      tag_names.size + wildcards.size + metatags.count { !it.name.in?(UNLIMITED_METATAGS) }
+    end
+
+    # @return [Integer] The total number of terms in the query, including free metatags.
+    def total_term_count
+      tag_names.size + wildcards.size + metatags.size
     end
   end
 

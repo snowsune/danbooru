@@ -23,17 +23,17 @@ class AutocompleteService
     filetype: MediaAsset::FILE_TYPES,
     commentary: %w[true false translated untranslated],
     disapproved: PostDisapproval::REASONS,
-    order: PostQueryBuilder::ORDER_METATAGS
+    order: PostQueryBuilder::ORDER_METATAGS,
   }
 
-  TAG_PREFIXES = TagCategory.mapping.keys.map { |prefix| prefix + ":" }
+  TAG_PREFIXES = TagCategory.mapping.keys.map { |prefix| "#{prefix}:" }
 
   attr_reader :query, :type, :limit, :current_user, :enabled
   alias_method :enabled?, :enabled
 
   # A Result represents a single autocomplete entry. `label` is the pretty name to
   # display in the autocomplete menu and `value` is the actual string to insert.
-  class Result < Struct.new(:type, :label, :value, :category, :post_count, :id, :level, :antecedent, keyword_init: true)
+  class Result < Struct.new(:type, :label, :value, :category, :post_count, :id, :level, :antecedent, :tag, keyword_init: true)
     include ActiveModel::Serializers::JSON
     include ActiveModel::Serializers::Xml
 
@@ -119,6 +119,7 @@ class AutocompleteService
       results = tag_abbreviation_matches(string)
     elsif string.include?("*")
       results = tag_wildcard_matches(string)
+      results = tag_autocorrect_matches(string.remove(/\*/)) if results.blank?
     elsif Tag.parsable_into_words?(string) # do a word match if the search contains at least 2 contiguous letters or numbers
       results = tag_word_matches(string)
       results = tag_autocorrect_matches(string) if results.blank?
@@ -148,15 +149,15 @@ class AutocompleteService
 
     results = tags.map do |tag|
       antecedent = tag.tag_alias_for_word_pattern(string)&.antecedent_name
-      { type: "tag-word", label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: antecedent }
+      { type: "tag-word", label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: antecedent, tag: tag }
     end
 
     results = results.sort_by do |result|
       name = result[:antecedent] || result[:value]
       post_count = result[:post_count]
 
-      large = post_count > 100 ? 1 : 0
-      exact = name == string ? 1 : 0
+      large = (post_count > 100) ? 1 : 0
+      exact = (name == string) ? 1 : 0
       substr = name.include?(string) ? 1 : 0
 
       # If the search contains punctuation, rank exact matches first then substring matches. Otherwise, if it
@@ -193,7 +194,7 @@ class AutocompleteService
     tags.map do |tag|
       antecedent = tag.tag_alias_for_pattern(string)&.antecedent_name
       type = antecedent.present? ? "tag-alias" : "tag"
-      { type: type, label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: antecedent }
+      { type: type, label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: antecedent, tag: tag }
     end
   end
 
@@ -210,7 +211,7 @@ class AutocompleteService
     tags = Tag.nonempty.abbreviation_matches(string).order(post_count: :desc).limit(limit)
 
     results = tags.map do |tag|
-      { type: "tag-abbreviation", label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: "/" + tag.abbreviation }
+      { type: "tag-abbreviation", label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: "/" + tag.abbreviation, tag: tag }
     end.sort_by do |r|
       [r[:antecedent].to_s.size, -r[:post_count]]
     end
@@ -230,7 +231,7 @@ class AutocompleteService
     tags = Tag.nonempty.autocorrect_matches(string).limit(limit)
 
     tags.map do |tag|
-      { type: "tag-autocorrect", label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: string }
+      { type: "tag-autocorrect", label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: string, tag: tag }
     end
   end
 
@@ -249,7 +250,7 @@ class AutocompleteService
     tags.map do |tag|
       other_names = tag.artist&.other_names.to_a + tag.wiki_page&.other_names.to_a
       antecedent = other_names.find { |other_name| other_name.ilike?(string + "*") }
-      { type: "tag-other-name", label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: antecedent }
+      { type: "tag-other-name", label: tag.pretty_name, value: tag.name, category: tag.category, post_count: tag.post_count, antecedent: antecedent, tag: tag }
     end
   end
 
@@ -400,20 +401,18 @@ class AutocompleteService
   # @see https://en.wikipedia.org/wiki/OpenSearch
   # @see https://developer.mozilla.org/en-US/docs/Web/OpenSearch
   def autocomplete_opensearch(string)
-    results = autocomplete_tag(string).map { |result| result[:value] }
+    results = autocomplete_tag(string).pluck(:value)
     [query, results]
   end
 
-  # How long autocomplete results can be cached. Cache short result lists (<10
-  # results) for less time because they're more likely to change.
+  # How long autocomplete results can be cached by the browser. Stale results will be refreshed in the background.
   def cache_duration
-    if type == :emoji
-      5.minutes
-    elsif autocomplete_results.size == limit
-      24.hours
-    else
-      1.hour
-    end
+    10.minutes
+  end
+
+  # How long stale results can be used while they're refreshed in the background.
+  def stale_while_revalidate_duration
+    1.day
   end
 
   # Whether the results can be safely cached with `Cache-Control: public`.

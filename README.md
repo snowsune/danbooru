@@ -50,32 +50,23 @@ Alternatively, you may use the [Manual Installation Guide](https://github.com/da
 
 For help, ask in the [#technical](https://discord.com/channels/310432830138089472/310846683376517121) channel on the [Danbooru Discord](https://discord.gg/danbooru), or in the [discussions area](https://github.com/danbooru/danbooru/discussions) on Github.
 
-## Services
+## Dependencies
 
-Danboou depends on a couple of cloud services and several microservices to
-implement certain features.
+Danbooru depends on a couple of cloud services and several microservices to implement certain features.
 
 ### Amazon Web Services
 
-The following features require an Amazon AWS account:
+In the production environment, for historical reasons, Danbooru relies on Amazon AWS to send pool/post versions to a SQS queue, and on a separate archives service ([available here](https://github.com/danbooru/archives/)) to extract the versions from that queue and insert them into a database.
 
-* Pool history
-* Post history
+The Docker Compose files in this repository come with a preconfigured archives service and an SQS mock using [ElasticMQ](https://github.com/softwaremill/elasticmq), so following the docker tutorial at the start of this file is sufficient to have post/pool versions working for a new instance.
 
 ### Google APIs
 
-The following features require a Google Cloud account:
-
-* BigQuery database export
+There is an optional background job that exports a copy of all public API data to BigQuery. This requires a Google Cloud account.
 
 ### IQDB Service
 
 IQDB integration is delegated to the [IQDB service](https://github.com/danbooru/iqdb).
-
-### Archive Service
-
-In order to access pool and post histories you will need to install and
-configure the [Archives service](https://github.com/danbooru/archives).
 
 ### Reportbooru Service
 
@@ -88,3 +79,7 @@ The following features are delegated to the [Reportbooru service](https://github
 ### Recommender Service
 
 Post recommendations require the [Recommender service](https://github.com/danbooru/recommender).
+
+## Development
+
+See [docs/README.md](docs/README.md) for information on the project structure, development workflow, and how to contribute.

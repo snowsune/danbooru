@@ -18,7 +18,7 @@
       </section>
     <% end %>
 
-    <%= render "posts/partials/index/blacklist" %>
+    <%= render BlacklistComponent.new(user: CurrentUser.user) %>
 
     <section id="tag-box">
       <h2>Tags</h2>
@@ -29,7 +29,7 @@
       <h2>Options</h2>
       <ul>
         <% if policy(SavedSearch).create? %>
-          <li><%= button_tag(bookmark_icon + " Save search", id: "save-search", class: "ui-button ui-widget ui-corner-all sub") %></li>
+          <li><%= button_tag(bookmark_icon + " Save search", id: "save-search") %></li>
         <% end %>
       </ul>
     </section>
@@ -59,7 +59,7 @@
 <% end %>
 
 <% content_for(:content) do %>
-  <menu id="post-sections" class="flex">
+  <menu id="post-sections" class="flex items-center mb-2">
     <li class="flex-grow-1 space-x-2">
       <a href="#" id="show-posts-link" class="active">Posts</a>
 
@@ -101,7 +101,8 @@
     <h2>Edit</h2>
 
     <%= edit_form_for(:post, html: { id: "quick-edit-form" }) do |f| %>
-      <%= f.input :tag_string, label: "Tags", as: :text, input_html: { "data-autocomplete": "tag-edit" } %>
+      <%= f.input :old_tag_string, as: :hidden %>
+      <%= f.input :tag_string, label: "Tags", as: :text, input_html: { class: "text-sm", "data-autocomplete": "tag-edit" } %>
       <%= f.submit "Submit", data: { disable_with: false } %>
       <%= f.button :button, "Cancel", name: :cancel, type: :button %>
     <% end %>
@@ -111,6 +112,9 @@
     <% if @post_set.artist.present? && @post_set.artist.is_banned? && !CurrentUser.user.is_approver? %>
       <p>This page has been removed because of a takedown request.</p>
     <% elsif @post_set.artist.present? %>
+      <% if policy(@post_set.artist).update? %>
+        <%= link_to "", edit_artist_path(@post_set.artist), "data-shortcut": "e", style: "display: none;" %>
+      <% end %>
       <%= render "artists/summary", artist: @post_set.artist %>
     <% elsif @post_set.tag&.artist? %>
       <p>There is no artist entry yet for the artist <%= link_to @post_set.tag.name, new_artist_path(artist: { name: @post_set.tag.name }), rel: "nofollow" %>. <%= link_to "Create new artist entry", new_artist_path(artist: { name: @post_set.tag.name }), rel: "nofollow" %>.</p>
@@ -118,11 +122,13 @@
       <%= render "tag_relationships/alias_and_implication_list", tag: @post_set.tag %>
     <% elsif @post_set.wiki_page.present? %>
       <% @post_set.wiki_page.tap do |wiki_page| %>
+        <% if policy(wiki_page).edit? %>
+          <%= link_to "", edit_wiki_page_path(wiki_page.id), "data-shortcut": "e", style: "display: none;" %>
+        <% end %>
+        <% if wiki_page.other_names.present? %>
+          <%= wiki_page_other_names_list(wiki_page) %>
+        <% end %>
         <div class="prose">
-          <% if wiki_page.other_names.present? %>
-            <%= wiki_page_other_names_list(wiki_page) %>
-          <% end %>
-
           <%= wiki_page.dtext_body.format_text %>
           <%= render "tag_relationships/alias_and_implication_list", tag: wiki_page.tag %>
 
@@ -139,6 +145,9 @@
       <% end %>
     <% elsif @post_set.pool.present? %>
       <% @post_set.pool.tap do |pool| %>
+        <% if policy(pool).update? %>
+          <%= link_to "", edit_pool_path(pool), "data-shortcut": "e", style: "display: none;" %>
+        <% end %>
         <h2>
           <%= pool.pretty_category %>:
           <%= link_to pool.pretty_name, pool_path(pool), :class => "pool-category-#{pool.category}" %>
@@ -156,6 +165,9 @@
         </p>
       <% end %>
     <% elsif @post_set.favgroup.present? %>
+      <% if policy(@post_set.favgroup).update? %>
+        <%= link_to "", edit_favorite_group_path(@post_set.favgroup), "data-shortcut": "e", style: "display: none;" %>
+      <% end %>
       <h2>
         Favorite Group:
         <%= link_to @post_set.favgroup.pretty_name, favorite_group_path(@post_set.favgroup) %>

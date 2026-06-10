@@ -9,97 +9,284 @@ module Source
           [parsed_url.full_image_url]
         elsif parsed_url.image_url?
           [parsed_url.original_url]
-        elsif post_json.present?
-          image_urls = post_json.dig("modules", "module_dynamic", "major", "opus", "pics").to_a.pluck("url")
-          image_urls.to_a.compact.map { |u| Source::URL.parse(u).full_image_url || u }
         elsif article_json.present?
           article_image_urls
+        elsif post_json.present?
+          post_image_urls
         else
           []
         end
       end
 
       memoize def article_image_urls
-        return [] unless article_json.present?
+        urls = []
 
-        artist_commentary_desc.to_s.parse_html.css("img").filter_map do |img|
-          # Skip:
-          #   <img data-src="//i0.hdslb.com/bfs/article/4adb9255ada5b97061e610b682b8636764fe50ed.png" class="cut-off-5">
-          #   <img data-src="//i0.hdslb.com/bfs/article/card/1-1card458718717_web.png" width="1320" height="188" data-size="37499" aid="458718717" class="video-card nomal" type="nomal">
-          #   <img data-src="//i0.hdslb.com/bfs/article/card/ef6b00f9d998c52e9a4bffb9051235c7ab288719.png" width="1320" height="224" data-size="44498" aid="20190469" class="article-card" type="normal">
-          #   <img alt="琉绮RUKI立绘.png" width="280" height="522">
-          #
-          # Keep:
-          #   <img data-src="//i0.hdslb.com/bfs/article/cf18da941f612502e994d8b9f991175dbfbbc7d9.png" width="650" height="180" data-size="11948" class="seamless" type="seamlessImage">
-          #   <img data-src="//i0.hdslb.com/bfs/article/82f9cb60d3f83b73a7c550d3142d65bc772a2527.png" width="476" height="2112" data-size="533862">
-          #   <img data-src="//i0.hdslb.com/bfs/article/watermark/ec0897d1aa461471149315f4b24e18a8a609853f.png" width="750" height="929" data-size="1486140">
-          next if img["class"]&.match?(/card|cut-off/) || img["data-src"].blank?
+        urls += article_json.dig("modules", "module_top", "display", "album", "pics").to_a.pluck("url")
+        urls += article_json.dig("modules", "module_content", "paragraphs").to_a.select do |paragraph|
+          paragraph["para_type"] == 2
+        end.pluck("pic").pluck("pics").flatten.pluck("url")
 
-          url = URI.join("https://", img["data-src"]).to_s
-          Source::URL.parse(url).full_image_url || url
-        end
+        urls.compact.map { |u| Source::URL.parse(u).full_image_url || u }
+      end
+
+      memoize def post_image_urls
+        urls = []
+
+        urls += post_json.dig("modules", "module_dynamic", "major", "opus", "pics").to_a.pluck("url")
+        urls += post_json.dig("modules", "module_dynamic", "desc", "rich_text_nodes").to_a.select do |node|
+          node["type"] == "RICH_TEXT_NODE_TYPE_VIEW_PICTURE"
+        end.pluck("pics").flatten.pluck("src")
+
+        urls.compact.map { |u| Source::URL.parse(u).full_image_url || u }
       end
 
       def page_url
         work_page || parsed_url.page_url || parsed_referer&.page_url
       end
 
+      def work_id_from_data
+        article_json["id_str"] || post_json["id_str"]
+      end
+
       def work_page
-        if post_json["id_str"].present?
-          "https://t.bilibili.com/#{post_json["id_str"]}"
-        elsif article_json["cvid"].present?
-          "https://www.bilibili.com/read/cv#{article_json["cvid"]}/"
+        if article_json["id_str"].present?
+          "https://www.bilibili.com/opus/#{article_json["id_str"]}"
+        elsif post_json["id_str"].present?
+          if post_json.dig("basic", "jump_url").present?
+            URI.join("https://", post_json.dig("basic", "jump_url")).to_s
+          else
+            "https://t.bilibili.com/#{post_json["id_str"]}"
+          end
+        end
+      end
+
+      def published_at
+        if parsed_url.image_url?
+          pub_ts = nil
+        elsif article_json.present?
+          pub_ts = article_json.dig("modules", "module_author", "pub_ts")
+        elsif post_json.present?
+          pub_ts = post_json.dig("modules", "module_author", "pub_ts")
+        end
+
+        Time.at(pub_ts).utc if pub_ts
+      end
+
+      def updated_at
+        if parsed_url.image_url?
+          pub_time = nil
+        elsif article_json.present?
+          pub_time = article_json.dig("modules", "module_author", "pub_time")
+        elsif post_json.present?
+          pub_time = post_json.dig("modules", "module_author", "pub_time")
+        end
+
+        if pub_time&.start_with?("编辑于")
+          # The input string is in CST.
+          time = Time.strptime(pub_time, "编辑于 %Y年%m月%d日 %H:%M")
+          Time.new(time.year, time.month, time.day, time.hour, time.min, 0, "+08:00").utc
         end
       end
 
       def artist_commentary_title
-        post_json.dig("modules", "module_dynamic", "major", "opus", "title") || article_json.dig("readInfo", "title")
+        # Is modules.module_dynamic.title supported in t.bilibili.com/:id works?
+        article_json.dig("modules", "module_title", "text") || post_json.dig("modules", "module_dynamic", "title") || post_json.dig("modules", "module_dynamic", "major", "opus", "title")
       end
 
       def artist_commentary_desc
-        if post_json.present?
-          post_json.dig("modules", "module_dynamic", "major", "opus", "summary", "rich_text_nodes").to_a.map do |text_node|
-            case text_node["type"]
-            when "RICH_TEXT_NODE_TYPE_BV", "RICH_TEXT_NODE_TYPE_TOPIC", "RICH_TEXT_NODE_TYPE_WEB"
-              "<a href='#{URI.join("https://", text_node["jump_url"])}'>#{text_node["text"]}</a>"
-            when "RICH_TEXT_NODE_TYPE_EMOJI"
-              "<a href='#{text_node.dig("emoji", "icon_url")}'>#{text_node["text"]}</a>"
-            when "RICH_TEXT_NODE_TYPE_AT"
-              "<a href='https://space.bilibili.com/#{text_node["rid"]}/dynamic'>#{text_node["text"]}</a>"
-            else # RICH_TEXT_NODE_TYPE_TEXT (text), unrecognized nodes, etc.
-              text_node["text"]
-            end
-          end.join
-        elsif article_json.present?
-          article_json.dig("readInfo", "content")
-        else
-          nil
+        article_commentary_desc.presence || post_commentary_desc.presence
+      end
+
+      # https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/opus/rich_text_nodes.md
+      def rich_text_node(rich)
+        text = CGI.escapeHTML(rich["text"])
+        case rich["type"]
+        when "RICH_TEXT_NODE_TYPE_BV", "RICH_TEXT_NODE_CV", "RICH_TEXT_NODE_TYPE_AV", "RICH_TEXT_NODE_TYPE_TOPIC", "RICH_TEXT_NODE_TYPE_WEB", "RICH_TEXT_NODE_TYPE_GOODS"
+          %{<a href="#{CGI.escapeHTML(URI.join("https://", rich["jump_url"]))}">#{text}</a>}
+        when "RICH_TEXT_NODE_TYPE_EMOJI"
+          %{<a href="#{rich.dig("emoji", "icon_url")}">#{text}</a>}
+        when "RICH_TEXT_NODE_TYPE_AT"
+          %{<a href="https://space.bilibili.com/#{rich["rid"]}/dynamic">#{text}</a>}
+        when "RICH_TEXT_NODE_TYPE_LOTTERY"
+          %{<a href="https://www.bilibili.com/h5/lottery/result?business_type=1&business_id=#{work_id_from_data}&isWeb=1">#{text}</a>}
+        when "RICH_TEXT_NODE_TYPE_VOTE"
+          %{<a href="https://t.bilibili.com/vote/h5/index/#/result?vote_id=#{rich["rid"]}">#{text}</a>}
+        when "RICH_TEXT_NODE_TYPE_VIEW_PICTURE"
+          ""
+        else # RICH_TEXT_NODE_TYPE_TEXT (text), unrecognized nodes, etc.
+          text.gsub("\n", "<br>")
         end
       end
 
+      # https://github.com/SocialSisterYi/bilibili-API-collect/blob/18bd4b22c552dc468e47949e449ddc298420c9e6/docs/opus/features.md#module_type_content
+      def article_text_node(node)
+        case node["type"]
+        when "TEXT_NODE_TYPE_WORD"
+          # Unsupported in Danbooru Dtext: `bg_style`, `color`
+          text = CGI.escapeHTML(node.dig("word", "words")).gsub("\n", "<br>")
+          case node.dig("word", "font_level")
+          when "xxLarge"
+            text = "<h4>#{text}</h4>"
+          when "xLarge"
+            text = "<h5>#{text}</h5>"
+          else # regular
+            text = "<b>#{text}</b>" if node.dig("word", "style", "bold")
+          end
+          text = "<s>#{text}</s>" if node.dig("word", "style", "strikethrough")
+          text = "<i>#{text}</i>" if node.dig("word", "style", "italic")
+          text
+        when "TEXT_NODE_TYPE_RICH"
+          rich_text_node(node["rich"])
+        else # TEXT_NODE_TYPE_FORMULA
+          ""
+        end
+      end
+
+      def link_card(card, type)
+        case type
+        when "goods"
+          text = card["items"].map do |item|
+            %{<a href="#{CGI.escapeHTML(item["jump_url"])}">#{CGI.escapeHTML(item["name"])}</a>}
+          end.join("<br>")
+        when "vote"
+          text = %{<a href="https://t.bilibili.com/vote/h5/index/#/result?vote_id=#{card["vote_id"]}">#{card["desc"]}</a>}
+        else
+          text = card["title"].to_s
+          if card["jump_url"].present?
+            jump_url = CGI.escapeHTML(URI.join("https://", card["jump_url"]))
+            if text.blank?
+              text = jump_url.to_s
+            end
+            text = %{<a href="#{jump_url}">#{text}</a>}
+          end
+        end
+
+        if card["head_text"].present?
+          text = "<small>#{card["head_text"]}</small><br>#{text}"
+        end
+        text
+      end
+
+      def article_commentary_desc
+        article_json.dig("modules", "module_content", "paragraphs").to_a.map do |paragraph|
+          # Unsupported in Danbooru Dtext: `align`
+          case paragraph["para_type"]
+          when 1, 4
+            text = paragraph.dig("text", "nodes").map do |node|
+              article_text_node(node)
+            end.join
+            text = "<blockquote>#{text}</blockquote>" if paragraph["para_type"] == 4
+            text
+          when 2
+            if paragraph.dig("pic", "style") != 1 # isAlbum
+              paragraph.dig("pic", "pics").map do |pic|
+                %{<a href="#{pic["url"]}">[Image]</a>}
+              end.join
+            end
+          when 3
+            "<hr>"
+          when 5
+            last_level = 0
+            text = paragraph.dig("list", "items").map do |item|
+              text = item["nodes"].map do |node|
+                article_text_node(node)
+              end.join
+              text = "#{item["order"]}. #{text}" if paragraph.dig("list", "style") == 1
+
+              if item["level"] > last_level
+                text = "#{"<ul><li>" * (item["level"] - last_level)}#{text}"
+              elsif item["level"] < last_level
+                text = "#{"</li></ul>" * (last_level - item["level"])}<li>#{text}"
+              else
+                text = "</li><li>#{text}"
+              end
+              last_level = item["level"]
+
+              text
+            end.join
+            "#{text}#{"</li></ul>" * last_level}"
+          when 6
+            case paragraph.dig("link_card", "card", "type")
+            when "LINK_CARD_TYPE_ITEM_NULL"
+              paragraph.dig("link_card", "card", "item_null", "text")
+            when "LINK_CARD_TYPE_UPOWER_LOTTERY" # paywalled?
+              ""
+            else
+              type = paragraph.dig("link_card", "card", "type").gsub("LINK_CARD_TYPE_", "").downcase
+              link_card(paragraph.dig("link_card", "card", type), type)
+            end
+          when 7
+            # `lang`?
+            "<pre>#{CGI.escapeHTML(paragraph.dig("code", "content"))}</pre>"
+          when 8
+            paragraph.dig("heading", "nodes").map do |node|
+              article_text_node(node)
+            end.join
+          else
+            ""
+          end
+        end.join("<br><br>")
+      end
+
+      def post_commentary_desc
+        rich_text_nodes = post_json.dig("modules", "module_dynamic", "desc", "rich_text_nodes") || post_json.dig("modules", "module_dynamic", "major", "opus", "summary", "rich_text_nodes")
+        rich_text_nodes.to_a.map do |text_node|
+          rich_text_node(text_node)
+        end.join
+      end
+
       def dtext_artist_commentary_desc
-        DText.from_html(artist_commentary_desc, base_url: "https://t.bilibili.com")
+        DText.from_html(artist_commentary_desc, base_url: "https://www.bilibili.com")
       end
 
       def tags
-        if post_json.present?
-          post_json.dig("modules", "module_dynamic", "major", "opus", "summary", "rich_text_nodes").to_a.select do |n|
-            n["type"] == "RICH_TEXT_NODE_TYPE_TOPIC"
+        article_tags.presence || post_tags.presence || []
+      end
+
+      def article_tags
+        tag_names = article_json.dig("modules", "module_content", "paragraphs").to_a.select do |paragraph|
+          paragraph["para_type"] == 1
+        end.flat_map do |paragraph|
+          paragraph.dig("text", "nodes").select do |text_node|
+            text_node["type"] == "TEXT_NODE_TYPE_RICH" && text_node["rich"]["type"] == "RICH_TEXT_NODE_TYPE_TOPIC"
           end.map do |tag|
-            tag_name = tag["text"].gsub(/(^#|#$)/, "")
+            tag.dig("rich", "text").gsub(/(^#|#$)/, "")
+          end
+        end
+
+        tag_names += article_json.dig("modules", "module_extend", "items").to_a.pluck("text")
+
+        tags = tag_names.map do |tag_name|
+          [tag_name, "https://search.bilibili.com/all?keyword=#{Danbooru::URL.escape(tag_name)}"]
+        end
+
+        if article_json.dig("modules", "module_topic").present?
+          tags << [
+            article_json.dig("modules", "module_topic", "name"),
+            "https://www.bilibili.com/v/topic/detail/?topic_id=#{article_json.dig("modules", "module_topic", "id")}",
+          ].compact
+        end
+
+        tags
+      end
+
+      def post_tags
+        rich_text_nodes = post_json.dig("modules", "module_dynamic", "desc", "rich_text_nodes") || post_json.dig("modules", "module_dynamic", "major", "opus", "summary", "rich_text_nodes")
+        rich_text_nodes.to_a.select do |n|
+          n["type"] == "RICH_TEXT_NODE_TYPE_TOPIC"
+        end.map do |tag|
+          tag_name = tag["text"].gsub(/(^#|#$)/, "")
+          if tag["jump_url"].present?
+            # Chinese characters are escaped in `jump_url`.
+            [tag_name, URI.join("https://", tag["jump_url"]).to_s]
+          else
             [tag_name, "https://t.bilibili.com/topic/name/#{Danbooru::URL.escape(tag_name)}"]
           end
-        elsif article_json.present?
-          article_json.dig("readInfo", "tags").to_a.map do |tag|
-            [tag["name"], "https://search.bilibili.com/article?keyword=#{Danbooru::URL.escape(tag["name"])}"]
-          end
-        else
-          []
         end
       end
 
       def display_name
-        post_json.dig("modules", "module_author", "name") || article_json.dig("readInfo", "author", "name")
+        article_json.dig("modules", "module_author", "name") || post_json.dig("modules", "module_author", "name")
       end
 
       def tag_name
@@ -111,7 +298,7 @@ module Source
       end
 
       def artist_id_from_data
-        post_json.dig("modules", "module_author", "mid") || article_json.dig("readInfo", "author", "mid")
+        article_json.dig("modules", "module_author", "mid") || post_json.dig("modules", "module_author", "mid")
       end
 
       def profile_url
@@ -119,7 +306,6 @@ module Source
       end
 
       def t_work_id
-        # for a repost this will be the ID of the repost, not the original one
         parsed_url.t_work_id || parsed_referer&.t_work_id
       end
 
@@ -127,42 +313,41 @@ module Source
         parsed_url.article_id || parsed_referer&.article_id
       end
 
-      def http
-        super.headers(
-          Referer: parsed_url.page_url || parsed_referer&.page_url || "https://www.bilibili.com",
-          "User-Agent": user_agent
-        )
-      end
-
       def user_agent
         # API requests fail unless we spoof the latest Firefox version. Firefox releases every 4 weeks.
-        # https://whattrainisitnow.com/calendar/
-        browser_ver = Time.use_zone("UTC") { 122 + ((Time.zone.today - Date.new(2024, 1, 23)).days.in_weeks.to_i / 4) }
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:#{browser_ver}.0) Gecko/20100101 Firefox/#{browser_ver}.0"
+        firefox_version = http.cache(5.minutes).parsed_get("https://whattrainisitnow.com/api/release/schedule/?version=release")&.dig("version")
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:#{firefox_version}) Gecko/20100101 Firefox/#{firefox_version}"
       end
 
-      memoize def page
-        url = parsed_url.page_url || parsed_referer&.page_url
-        http.cache(1.minute).parsed_get(url)
+      def buvid3
+        data = http.cache(5.minutes).parsed_get("https://api.bilibili.com/x/web-frontend/getbuvid")
+        data&.dig("data", "buvid")
       end
 
       memoize def post_json
         return {} if t_work_id.blank?
 
-        data = http.cache(1.minute).parsed_get("https://api.bilibili.com/x/polymer/web-dynamic/v1/detail?id=#{t_work_id}&features=itemOpusStyle") || {}
-
-        if data.dig("data", "item", "orig", "id_str").present? # it means it's a repost
-          data.dig("data", "item", "orig")
-        else
-          data.dig("data", "item").to_h
-        end
+        data = http.headers("User-Agent": user_agent).cache(1.minute).parsed_get("https://api.bilibili.com/x/polymer/web-dynamic/v1/detail?id=#{t_work_id}&features=itemOpusStyle") || {}
+        data.dig("data", "item").to_h
       end
 
       memoize def article_json
-        return {} if article_id.nil? || page.nil?
+        opus_id = t_work_id
+        if article_id.present?
+          data = http.headers("User-Agent": user_agent).cache(1.minute).parsed_get("https://api.bilibili.com/x/article/view?id=#{article_id}") || {}
+          opus_id = data.dig("data", "dyn_id_str")
+        end
+        return {} if opus_id.blank?
 
-        script = page&.css("body script").to_a.map(&:text).grep(/window.__INITIAL_STATE__/).first.to_s
-        script[/window.__INITIAL_STATE__=(.*);\(function\(\){[^"]*}\(\)\);\z/, 1]&.parse_json || {}
+        data = http.headers("User-Agent": user_agent).cookies(buvid3: buvid3).cache(1.minute).parsed_get("https://api.bilibili.com/x/polymer/web-dynamic/v1/opus/detail?id=#{opus_id}&features=htmlNewStyle") || {}
+        data = data.dig("data", "item").to_h
+
+        modules = data["modules"]
+        if modules.present?
+          data["modules"] = modules.each { |mod| mod.delete("module_type") }.reduce({}, :merge)
+        end
+
+        data
       end
     end
   end

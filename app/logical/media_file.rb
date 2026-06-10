@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "zip" # rubyzip
+
 # A MediaFile represents an image, video, or flash file. It contains methods for
 # detecting the file type, for generating a preview image, for getting metadata,
 # and for resizing images.
@@ -45,16 +47,18 @@ class MediaFile
   # @param file_ext [Symbol] The file extension.
   # @param options [Hash] Extra options for the MediaFile subclass.
   # @return [MediaFile] The media file.
-  def self.new_from_file(file, file_ext = MediaFile.file_ext(file), **options)
+  def self.new_from_file(file, file_ext = MediaFile.file_ext(file), frame_delays: nil, **options)
     case file_ext
-    when :jpg, :gif, :png, :webp, :avif
+    in :jpg | :gif | :png | :webp | :avif
       MediaFile::Image.new(file, **options)
-    when :swf
+    in :swf
       MediaFile::Flash.new(file, **options)
-    when :webm, :mp4
+    in :webm | :mp4
       MediaFile::Video.new(file, **options)
-    when :zip
+    in :ugoira
       MediaFile::Ugoira.new(file, **options)
+    in :zip if frame_delays.present?
+      MediaFile::Ugoira.new(file, frame_delays:, **options)
     else
       MediaFile.new(file, **options)
     end
@@ -77,6 +81,12 @@ class MediaFile
   # @param file [File] The image file.
   def initialize(file, **options)
     @file = file
+  end
+
+  # Close the file if it is open.
+  def close
+    @file&.close
+    @file = nil
   end
 
   # @return [Array<(Integer, Integer)>] the width and height of the file
@@ -141,8 +151,9 @@ class MediaFile
     ExifTool.new(file).metadata
   end
 
+  # @return [Mime::Type] The MIME type of the file, or "application/octet-stream" if unknown.
   def mime_type
-    Mime::Type.lookup_by_extension(file_ext)
+    Mime::Type.lookup_by_extension(file_ext) || Mime::Type.lookup("application/octet-stream")
   end
 
   # @return [Boolean] True if the file is supported by Danbooru. Certain files may be unsupported because they use features we don't support.
@@ -227,7 +238,7 @@ class MediaFile
   # @return [MediaFile, nil] a preview file, or nil if we can't generate a preview for this file type (e.g. Flash files)
   def preview(width, height, **options)
     preview!(width, height, **options)
-  rescue
+  rescue StandardError
     nil
   end
 
@@ -260,7 +271,7 @@ class MediaFile
       duration: duration,
       frame_count: frame_count,
       frame_rate: frame_rate,
-      metadata: metadata
+      metadata: metadata,
     }.stringify_keys
   end
 

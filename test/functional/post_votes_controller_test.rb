@@ -1,9 +1,9 @@
-require 'test_helper'
+require "test_helper"
 
 class PostVotesControllerTest < ActionDispatch::IntegrationTest
   context "The post vote controller" do
     setup do
-      @user = create(:gold_user, name: "meiling")
+      @user = create(:gold_user)
       @post = create(:post, tag_string: "dragon")
     end
 
@@ -27,6 +27,8 @@ class PostVotesControllerTest < ActionDispatch::IntegrationTest
       should "render for a tooltip" do
         get post_votes_path(search: { post_id: @upvote.post_id }, variant: "tooltip")
         assert_response :success
+        assert_select "#page", count: 0
+        assert_select "#page-footer", count: 0
       end
 
       context "as a user" do
@@ -258,7 +260,7 @@ class PostVotesControllerTest < ActionDispatch::IntegrationTest
       end
 
       should "allow users to remove their own votes" do
-        delete_auth post_post_votes_path(post_id: @vote.post_id), @user, xhr: true
+        delete_auth post_vote_path(@vote), @user, xhr: true
 
         assert_response :success
         assert_equal(0, @post.reload.score)
@@ -293,7 +295,7 @@ class PostVotesControllerTest < ActionDispatch::IntegrationTest
 
       should "not fail when attempting to remove an already removed vote" do
         @vote.soft_delete!
-        delete_auth post_post_votes_path(post_id: @vote.post_id), @user, xhr: true
+        delete_auth post_vote_path(@vote), @user, xhr: true
 
         assert_response :success
         assert_equal(0, @post.reload.score)

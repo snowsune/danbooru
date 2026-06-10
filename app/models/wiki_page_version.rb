@@ -10,7 +10,7 @@ class WikiPageVersion < ApplicationRecord
 
   module SearchMethods
     def search(params, current_user)
-      q = search_attributes(params, [:id, :created_at, :updated_at, :title, :body, :other_names, :is_locked, :is_deleted, :updater, :wiki_page, :tag], current_user: current_user)
+      q = search_attributes(params, %i[id created_at updated_at title body other_names is_locked is_deleted updater wiki_page tag], current_user: current_user)
 
       q.apply_default_order(params)
     end
@@ -22,14 +22,16 @@ class WikiPageVersion < ApplicationRecord
     title.tr("_", " ")
   end
 
+  def next
+    @next ||= wiki_page.versions.where("id > ?", id).first
+  end
+
   def previous
-    @previous ||= WikiPageVersion.where("wiki_page_id = ? and id < ?", wiki_page_id, id).order("id desc").limit(1).to_a
-    @previous.first
+    @previous ||= wiki_page.versions.where(id: ...id).last
   end
 
   def current
-    @current ||= WikiPageVersion.where(wiki_page_id: wiki_page_id).order("id desc").limit(1).to_a
-    @current.first
+    @current ||= wiki_page.versions.last
   end
 
   def self.status_fields

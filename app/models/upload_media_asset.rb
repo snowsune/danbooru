@@ -7,6 +7,7 @@ class UploadMediaAsset < ApplicationRecord
 
   belongs_to :upload
   belongs_to :media_asset, optional: true
+  belongs_to :user, default: -> { upload.uploader }
   has_one :post, through: :media_asset
 
   after_create :async_process_upload!
@@ -16,7 +17,7 @@ class UploadMediaAsset < ApplicationRecord
   validates :source_url, format: { with: %r{\A(https?|file)://}i, message: "is not a valid URL" }
   validates :page_url, format: { with: %r{\A(https?)://}i, message: "is not a valid URL" }, allow_nil: true
 
-  enum status: {
+  enum :status, {
     pending: 0,
     processing: 100,
     active: 200,
@@ -33,7 +34,7 @@ class UploadMediaAsset < ApplicationRecord
     elsif user.is_anonymous?
       none
     else
-      where(upload: user.uploads)
+      where(user: user)
     end
   end
 
@@ -57,7 +58,7 @@ class UploadMediaAsset < ApplicationRecord
   end
 
   def self.search(params, current_user)
-    q = search_attributes(params, [:id, :created_at, :updated_at, :status, :source_url, :page_url, :error, :upload, :media_asset, :post], current_user: current_user)
+    q = search_attributes(params, %i[id created_at updated_at status source_url page_url error upload media_asset post], current_user: current_user)
 
     if params[:is_posted].to_s.truthy?
       q = q.where.associated(:post)
@@ -67,9 +68,9 @@ class UploadMediaAsset < ApplicationRecord
 
     case params[:order]
     when "id_desc"
-      q = q.order(id: :desc)
+      q.order(id: :desc)
     when "id_asc"
-      q = q.order(id: :asc)
+      q.order(id: :asc)
     else
       q.apply_default_order(params)
     end
@@ -90,6 +91,10 @@ class UploadMediaAsset < ApplicationRecord
 
   def bad_link?
     parsed_canonical_url&.bad_link?
+  end
+
+  def image_sample?
+    parsed_source_url&.image_sample?
   end
 
   # The source of the post after upload. This is either the image URL, if the image URL is convertible to a page URL
@@ -114,6 +119,10 @@ class UploadMediaAsset < ApplicationRecord
     else
       source_url
     end
+  end
+
+  memoize def parsed_source_url
+    Source::URL.parse(source_url) unless file_upload?
   end
 
   memoize def parsed_canonical_url

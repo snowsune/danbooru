@@ -3,25 +3,20 @@
 # @see Source::URL::Poipiku
 class Source::Extractor
   class Poipiku < Source::Extractor
-    delegate :page_url, :profile_url, :user_id, :post_id, to: :parsed_url
-
-    def image_urls
-      if parsed_url.image_url?
-        [parsed_url.full_image_url]
-      else
-        image_urls_from_html
-      end
+    def self.enabled?
+      SiteCredential.for_site("Poipiku").present?
     end
 
-    def image_urls_from_html
-      first_image = page&.at("img.IllustItemThumbImg")&.attr(:src).to_s
-      additional_images = additional_images_html&.css("img").to_a.pluck(:src)
+    delegate :profile_url, :user_id, to: :parsed_url
 
-      [first_image, *additional_images].map do |url|
-        # url = "//img.poipiku.com/user_img03/000013318/007865949_015701153_EcvKNO8Dt.png_640.jpg"
-        url = "https:#{url}" if url.starts_with?("//")
+    # Paswords to check.
+    # Password parameter is ignored when it's not needed, so no need for an explicit empty password
+    PASSWORDS = %w[y yes]
+
+    def image_urls
+      api_html&.css("img.DetailIllustItemImage").to_a.pluck(:src).map do |url|
         Source::URL.parse(url)&.full_image_url
-      end.compact
+      end&.compact
     end
 
     def profile_urls
@@ -59,15 +54,34 @@ class Source::Extractor
       end
     end
 
-    memoize def page
-      http.cache(1.minute).parsed_get(page_url)
+    def page_url
+      # The original parsed_url.page_url may redirect to a different page with a different post ID; get the final page.
+      page&.at_css('link[rel="canonical"]')&.attr(:href) || parsed_url.page_url
     end
 
-    memoize def additional_images_html
+    def post_id
+      Source::URL.parse(page_url).try(:post_id)
+    end
+
+    memoize def page
+      parsed_get(parsed_url.page_url)
+    end
+
+    memoize def api_html
       return nil if user_id.blank? || post_id.blank?
 
-      html = http.cookies(POIPIKU_LK: Danbooru.config.poipiku_session_cookie).use(:spoof_referrer).cache(1.minute).parsed_post("https://poipiku.com/f/ShowAppendFileF.jsp", form: { UID: user_id, IID: post_id })
-      html&.text&.parse_json&.dig("html")&.parse_html
+      PASSWORDS.each do |pw|
+        res = http.cookies(POIPIKU_LK: credentials[:session_cookie], POIPIKU_CONTENTS_VIEW_MODE: 1)
+                  .headers(Referer: "https://poipiku.com")
+                  .parsed_post(
+                    "https://poipiku.com/f/ShowIllustDetailF.jsp",
+                    form: { ID: user_id, TD: post_id, PAS: pw },
+                  )&.text&.parse_json
+
+        return res[:html].parse_html if res[:result] == 1
+      end
+
+      nil
     end
   end
 end

@@ -1,9 +1,9 @@
-require 'test_helper'
+require "test_helper"
 
 class PostRegenerationsControllerTest < ActionDispatch::IntegrationTest
   context "The post regenerations controller" do
     setup do
-      @mod = create(:moderator_user, name: "yukari", created_at: 1.month.ago)
+      @mod = create(:moderator_user, created_at: 1.month.ago)
       @post = create(:post_with_file, filename: "test.jpg")
       perform_enqueued_jobs # add post to iqdb
     end
@@ -25,6 +25,8 @@ class PostRegenerationsControllerTest < ActionDispatch::IntegrationTest
         should "regenerate IQDB" do
           post_auth post_regenerations_path, @mod, params: { post_id: @post.id, category: "iqdb" }
           perform_enqueued_jobs
+
+          assert_redirected_to @post
         end
 
         should "log a mod action" do

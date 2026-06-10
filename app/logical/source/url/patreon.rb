@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
 class Source::URL::Patreon < Source::URL
-  RESERVED_USERNAMES = %w[api bePatron card-teaser-image collection checkout file home join
+  site "Patreon", url: "https://www.patreon.com", domains: %w[patreon.com patreonusercontent.com]
+
+  RESERVED_USERNAMES = %w[api bePatron c cw card-teaser-image collection checkout file home join
                           login m messages notifications policy posts profile search settings user]
 
-  attr_reader :username, :user_id, :post_id, :attachment_id, :title, :media_hash, :media_params
+  attr_reader :username, :user_id, :post_id, :attachment_id, :title, :shop_title, :shop_item_id, :media_hash, :media_params
 
   def self.match?(url)
     url.domain.in?(%w[patreon.com patreonusercontent.com])
@@ -39,12 +41,15 @@ class Source::URL::Patreon < Source::URL
     # https://www.patreon.com/checkout/1041uuu?rid=0
     # https://www.patreon.com/join/twistedgrim/checkout?rid=704013&redirect_uri=/posts/noi-dorohedoro-39394158
     # https://www.patreon.com/m/1041uuu/about
-    in _, "patreon.com", ("checkout" | "join" | "m"), username, *rest unless username.in?(RESERVED_USERNAMES)
+    # https://www.patreon.com/c/yaisirdrawz
+    # https://www.patreon.com/cw/iwanokenta
+    in _, "patreon.com", ("checkout" | "join" | "m" | "c" | "cw"), username, *rest unless username.in?(RESERVED_USERNAMES)
       @username = username
 
     # https://www.patreon.com/bePatron?u=4045578
     # https://www.patreon.com/user?u=5993691
     # https://www.patreon.com/user/posts?u=84592583
+    # https://www.patreon.com/profile/creators?u=32306860
     in _, "patreon.com", *rest if params[:u].present?
       @user_id = params[:u]
 
@@ -60,6 +65,11 @@ class Source::URL::Patreon < Source::URL
     # https://www.patreon.com/api/user/4045578
     in _, "patreon.com", "api", "user", user_id
       @user_id = user_id
+
+    # https://www.patreon.com/nlch/shop/simple-life-with-my-unobtrusive-girl-1157344
+    in _, "patreon.com", username, "shop", slug, *rest unless username.in?(RESERVED_USERNAMES)
+      @username = username
+      @shop_title, _, @shop_item_id = slug.rpartition("-")
 
     # https://www.patreon.com/1041uuu
     # https://www.patreon.com/1041uuu/about
@@ -85,6 +95,8 @@ class Source::URL::Patreon < Source::URL
   def page_url
     if title.present? && post_id.present?
       "https://www.patreon.com/posts/#{title}-#{post_id}"
+    elsif username.present? && shop_title.present? && shop_item_id.present?
+      "https://www.patreon.com/#{username}/shop/#{shop_title}-#{shop_item_id}"
     elsif post_id.present?
       "https://www.patreon.com/posts/#{post_id}"
     end
@@ -96,5 +108,9 @@ class Source::URL::Patreon < Source::URL
     elsif user_id.present?
       "https://www.patreon.com/user?u=#{user_id}"
     end
+  end
+
+  def secondary_url?
+    profile_url? && username.blank?
   end
 end

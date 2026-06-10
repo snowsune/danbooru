@@ -2,6 +2,7 @@
 
 class Upload < ApplicationRecord
   extend Memoist
+
   class Error < StandardError; end
 
   # The list of allowed archive file types.
@@ -20,10 +21,11 @@ class Upload < ApplicationRecord
   has_many :media_assets, through: :upload_media_assets
   has_many :posts, through: :media_assets
 
-  normalize :source, :normalize_source
+  # Decode percent-encoded Unicode characters in the URL
+  normalizes :source, with: ->(url) { Danbooru::URL.parse(url)&.to_normalized_s.presence || url }
 
-  validates :source, format: { with: %r{\Ahttps?://}i, message: "is not a valid URL" }, if: -> { source.present? }
-  validates :referer_url, format: { with: %r{\Ahttps?://}i, message: "is not a valid URL" }, if: -> { referer_url.present? }
+  validates :source, format: { with: %r{\Ahttps?://}i, message: "is not a valid URL" }, length: { maximum: 2000 }, if: -> { source.present? && source_changed? }
+  validates :referer_url, format: { with: %r{\Ahttps?://}i, message: "is not a valid URL" }, length: { maximum: 2000 }, if: -> { referer_url.present? && referer_url_changed? }
   validates :status, inclusion: { in: %w[pending processing completed error] }
   validate :validate_file_and_source, on: :create
   validate :validate_archive_files, on: :create
@@ -38,7 +40,7 @@ class Upload < ApplicationRecord
   scope :expired, -> { processing.where(created_at: ..4.hours.ago) }
 
   def self.visible(user)
-    if user.is_admin?
+    if user.is_moderator?
       all
     else
       where(uploader: user)
@@ -100,11 +102,11 @@ class Upload < ApplicationRecord
           next
         elsif archive.uncompressed_size > MediaAsset::MAX_FILE_SIZE
           errors.add(:base, "'#{filename}' is too large (uncompressed size: #{archive.uncompressed_size.to_fs(:human_size)}; max size: #{MediaAsset::MAX_FILE_SIZE.to_fs(:human_size)})")
-        elsif entry = archive.entries.find { |entry| entry.pathname.starts_with?("/") }
+        elsif (entry = archive.entries.find { |entry| entry.pathname.starts_with?("/") })
           errors.add(:base, "'#{entry.pathname_utf8}' in '#{filename}' can't start with '/'")
-        elsif entry = archive.entries.find { |entry| entry.directory_traversal? }
+        elsif (entry = archive.entries.find { |entry| entry.directory_traversal? })
           errors.add(:base, "'#{entry.pathname_utf8}' in '#{filename}' can't contain '..' components")
-        elsif entry = archive.entries.find { |entry| !entry.file? && !entry.directory? }
+        elsif (entry = archive.entries.find { |entry| !entry.file? && !entry.directory? })
           errors.add(:base, "'#{entry.pathname_utf8}' in '#{filename}' isn't a regular file")
         end
       end
@@ -116,22 +118,21 @@ class Upload < ApplicationRecord
     end
   end
 
-  concerning :SourceMethods do
-    class_methods do
-      # Decode percent-encoded Unicode characters in the URL
-      def normalize_source(url)
-        Danbooru::URL.parse(url)&.to_normalized_s.presence || url
-      end
-    end
-  end
-
   def self.ai_tags_match(tag_string, score_range: (50..))
     upload_media_assets = MediaAssetQuery.search(tag_string, relation: UploadMediaAsset.joins(:media_asset), foreign_key: :media_asset_id, score_range: score_range)
     where(upload_media_assets.where("upload_media_assets.upload_id = uploads.id").arel.exists)
   end
 
+  def self.any_source_matches(source)
+    upload_media_assets = UploadMediaAsset.where_ilike(:source_url, source)
+    q = where_ilike(:source, source)
+    q = q.or(where_ilike(:referer_url, source))
+    q = q.or(where(upload_media_assets.where("upload_media_assets.upload_id = uploads.id").arel.exists))
+    q
+  end
+
   def self.search(params, current_user)
-    q = search_attributes(params, [:id, :created_at, :updated_at, :source, :referer_url, :status, :media_asset_count, :uploader, :upload_media_assets, :media_assets, :posts], current_user: current_user)
+    q = search_attributes(params, %i[id created_at updated_at source referer_url status media_asset_count uploader upload_media_assets media_assets posts], current_user: current_user)
 
     if params[:ai_tags_match].present?
       min_score = params.fetch(:min_score, 50).to_i
@@ -142,6 +143,10 @@ class Upload < ApplicationRecord
       q = q.where.not(id: Upload.where.missing(:posts))
     elsif params[:is_posted].to_s.falsy?
       q = q.where(id: Upload.where.missing(:posts))
+    end
+
+    if params[:any_source_matches].present?
+      q = q.any_source_matches(params[:any_source_matches])
     end
 
     case params[:order]
@@ -238,7 +243,7 @@ class Upload < ApplicationRecord
 
   # The list of archive files uploaded from disk, with their filenames.
   def archive_files
-    uploaded_files.select do |file, original_filename|
+    uploaded_files.select do |file, _original_filename|
       file.is_a?(Danbooru::Archive)
     end
   end

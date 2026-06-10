@@ -58,7 +58,7 @@ module Danbooru
       @url.path = @url.path.gsub(/[^[:graph:]]/) { |c| "%%%02X" % c.ord }
       @url.path = nil if @url.path == "/"
 
-      raise Error, "#{original_url} is not a #{schemes.map { "#{_1}://" }.to_sentence(two_words_connector: " or ", last_word_connector: ", or ")} URL" if !@url.normalized_scheme.in?(schemes)
+      raise Error, "#{original_url} is not a #{schemes.map { "#{it}://" }.to_sentence(two_words_connector: " or ", last_word_connector: ", or ")} URL" if !@url.normalized_scheme.in?(schemes)
       raise Error, "#{host} is not a valid hostname" if parsed_domain.nil? && ip_address.nil? && @url.normalized_scheme.in?(%w[http https])
     rescue Addressable::URI::InvalidURIError => e
       raise Error, e
@@ -92,12 +92,28 @@ module Danbooru
     #
     # @return [String] The escaped string
     def self.escape(string)
-      Addressable::URI.encode_component(string, /[\/?#&+%]/).force_encoding("UTF-8")
+      Addressable::URI.encode_component(string.to_s, /[\/?#&+%]/).force_encoding("UTF-8")
     end
 
-    # Unescape URL-encoded characters in a string.
+    # Unescape percent-encoded characters in a string.
     def self.unescape(string)
       Addressable::URI.unencode_component(string)
+    end
+
+    # Normalize a URL to canonical form. Unescape percent-encoded characters that don't need to be escaped, escape the
+    # ones that do, and convert to absolute URL if possible.
+    #
+    # @example
+    #   Danbooru::URL.normalize("//example.com/%E6%9D%B1%E6%96%B9 project") # => "https://example.com/東方%20project"
+    #
+    # @param url [String] The URL to normalize.
+    # @param base_url [String, nil] The base URL to resolve relative URLs against. If base URL is "https://example.com", then "/path" will become "https://example.com/path".
+    # @return [String, nil] The URL in normalized form, or nil if the input string is not a valid URL.
+    def self.normalize(url, base_url: nil)
+      url = "https:#{url}" if url.starts_with?("//")
+      url = Addressable::URI.join(base_url, url).to_s if base_url.present? && url.starts_with?("/")
+
+      parse(url)&.to_normalized_s
     end
 
     # @return [String] the URL in unnormalized form
@@ -151,6 +167,7 @@ module Danbooru
 
       if components.key?(:params)
         components[:query] = components.delete(:params).to_h.map do |key, value|
+          next if value.nil?
           "#{Danbooru::URL.escape(key)}=#{Danbooru::URL.escape(value)}"
         end.join("&").presence
       end
@@ -184,6 +201,14 @@ module Danbooru
       self.class.new(url.merge(components))
     end
 
+    # Return a new URL with the given query params appended.
+    #
+    # @param params [Hash] The query params to append.
+    # @return [Danbooru::URL] The new URL.
+    def with_params(**params)
+      with(params: self.params.merge(params))
+    end
+
     # Return a new URL with the given components removed. For example, return a new URL with the path or query params removed.
     #
     # @param components [Array<String, Symbol>] The URL components to override (scheme, authority, userinfo, user,
@@ -215,12 +240,12 @@ module Danbooru
 
     # @return [Danbooru::Domain, nil] The domain name of the URL, or nil if the URL doesn't have a domain.
     memoize def parsed_domain
-      Danbooru::Domain.parse(host) unless host.blank?
+      Danbooru::Domain.parse(host) if host.present?
     end
 
     # @return [Danbooru::IpAddress, nil] The IP address of the URL, if the URL's host is an IP address instead of a domain name.
     memoize def ip_address
-      Danbooru::IpAddress.parse(hostname) unless hostname.blank?
+      Danbooru::IpAddress.parse(hostname) if hostname.present?
     end
 
     # Strict equality on unnormalized URLs. `Danbooru::URL.parse("https://google.com") == Danbooru::URL.parse("https://google.com/")` is false.

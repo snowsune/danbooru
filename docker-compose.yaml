@@ -80,13 +80,20 @@
 # This doesn't change the name of the site, it only affects the name used by Docker Compose.
 name: danbooru
 
+x-sqs-env: &sqs-env
+  # Required to have working post and pool versions
+  DANBOORU_AWS_SQS_REGION: us-east-1
+  DANBOORU_AWS_ACCESS_KEY_ID: dummy
+  DANBOORU_AWS_SECRET_ACCESS_KEY: dummy
+  DANBOORU_AWS_SQS_ARCHIVES_URL: http://sqs:9324/000000000000/danbooru.fifo
+  DANBOORU_AWS_SQS_HOST: http://sqs:9324
+
 x-base-template: &base-template
   # You can set DANBOORU_IMAGE to `ghcr.io/danbooru/danbooru:master` to get the latest unstable release,
   # or e.g. `ghcr.io/danbooru/danbooru:production-2024.01.12-055003-utc` to get a specific stable version.
   #
   # See https://github.com/danbooru/danbooru/pkgs/container/danbooru for a list of versions
-  #image: ${DANBOORU_IMAGE:-ghcr.io/danbooru/danbooru:production}
-  image: ghcr.io/snowsune/danbooru:latest
+  image: ${DANBOORU_IMAGE:-ghcr.io/snowsune/danbooru:latest}
 
   read_only: true
   restart: unless-stopped
@@ -98,11 +105,12 @@ x-base-template: &base-template
     retries: 1
 
   environment:
+    <<: *sqs-env
     # The public URL of your site. You can set this if you have a domain name for your site.
-    DANBOORU_CANONICAL_URL: "https://booru.kitsunehosting.net"
+    DANBOORU_CANONICAL_URL: "${DANBOORU_CANONICAL_URL:-https://booru.snowsune.net}"
 
     # Set this to true if you're running behind a reverse proxy, such as Cloudflare.
-    DANBOORU_REVERSE_PROXY: true
+    DANBOORU_REVERSE_PROXY: "${DANBOORU_REVERSE_PROXY:-true}"
 
     # You should set DANBOORU_SECRET_KEY_BASE to a random secret string. If you
     # don't set this, you will be logged out every time you restart the instance.
@@ -178,8 +186,7 @@ services:
       - "danbooru-data:/var/lib/postgresql/data"
 
   nginx:
-    #image: ${DANBOORU_IMAGE:-ghcr.io/danbooru/danbooru:production}
-    image: ghcr.io/snowsune/danbooru:latest
+    image: ${DANBOORU_IMAGE:-ghcr.io/snowsune/danbooru:latest}
     command: ["openresty", "-e", "/dev/stderr"]
     environment:
       # The external port to listen on. You can set this to 80 if you have nothing else listening on port 80.
@@ -188,10 +195,10 @@ services:
       # If your instance is running behind a reverse proxy (such as Cloudflare, Ngrok, etc), then set this to true.
       #
       # If you get a `HTTP Origin header didn't match request.base_url` error when creating a new account, then set this to true.
-      DANBOORU_REVERSE_PROXY: true
+      DANBOORU_REVERSE_PROXY: "${DANBOORU_REVERSE_PROXY:-true}"
 
       # Used by Nginx to determine the root directory if we're running in a subdirectory (e.g. http://example.com/danbooru).
-      DANBOORU_CANONICAL_URL: "https://booru.kitsunehosting.net"
+      DANBOORU_CANONICAL_URL: "${DANBOORU_CANONICAL_URL:-https://booru.snowsune.net}"
     ports:
       - "${DANBOORU_PORT:-3000}:3000"
     depends_on:
@@ -205,6 +212,36 @@ services:
 
   autotagger:
     image: ghcr.io/danbooru/autotagger:latest
+
+  sqs:
+    image: softwaremill/elasticmq-native
+    expose:
+    - 9324
+    volumes:
+      - sqs-data:/data
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+  archives-service:
+    depends_on:
+      sqs:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    image: ghcr.io/danbooru/archives:latest
+    environment:
+      <<: *sqs-env
+      RUN: 1
+      #db config
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: danbooru
+      POSTGRES_USER: danbooru
+      # POSTGRES_PASSWORD=
+    command: ["scripts/docker-bootstrap.sh"]
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
 
 configs:
   danbooru_local_config:
@@ -221,3 +258,5 @@ volumes:
     name: ${COMPOSE_PROJECT_NAME}-data
   iqdb-data:
     name: ${COMPOSE_PROJECT_NAME}-iqdb-data
+  sqs-data:
+    name: ${COMPOSE_PROJECT_NAME}-sqs-data

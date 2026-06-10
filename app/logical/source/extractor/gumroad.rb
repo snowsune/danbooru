@@ -11,6 +11,8 @@ class Source::Extractor
       elsif artist_commentary_desc.present? # post
         urls = artist_commentary_desc.to_s.parse_html.css("img").pluck("src")
         urls.select { |url| Source::URL::Gumroad.parse(url)&.image_url? }
+      else
+        []
       end
     end
 
@@ -49,7 +51,7 @@ class Source::Extractor
     end
 
     memoize def api_response
-      page&.at("script.js-react-on-rails-component")&.text&.parse_json || {}
+      page&.at("#app")&.attr("data-page")&.parse_json&.dig(:props) || {}
     end
   end
 end

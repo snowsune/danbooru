@@ -3,7 +3,7 @@
 # @see Source::URL::Piapro
 class Source::Extractor::Piapro < Source::Extractor
   def self.enabled?
-    Danbooru.config.piapro_session_cookie.present?
+    SiteCredential.for_site("Piapro.jp").present?
   end
 
   def image_urls
@@ -69,7 +69,7 @@ class Source::Extractor::Piapro < Source::Extractor
 
   def tags
     page&.css(".contents_taglist .tag a").to_a.map do |tag|
-      [tag.text, "https://piapro.jp/content_list/?view=image&tag=#{Danbooru::URL.escape(tag)}"]
+      [tag.text, "https://piapro.jp/content_list/?view=image&tag=#{Danbooru::URL.escape(tag.text)}"]
     end
   end
 
@@ -98,10 +98,10 @@ class Source::Extractor::Piapro < Source::Extractor
 
   memoize def page
     url = parsed_url.page_url || parsed_referer&.page_url
-    http.cache(1.minute).parsed_get(url)
+    parsed_get(url)
   end
 
   def http
-    super.cookies(piapro_s: Danbooru.config.piapro_session_cookie)
+    super.cookies(piapro_s: credentials[:session_cookie])
   end
 end

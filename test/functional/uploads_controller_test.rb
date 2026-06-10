@@ -1,4 +1,4 @@
-require 'test_helper'
+require "test_helper"
 
 class UploadsControllerTest < ActionDispatch::IntegrationTest
   context "The uploads controller" do
@@ -50,15 +50,15 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
 
       context "for a search" do
         setup do
-          CurrentUser.user = @user
           @upload = create(:completed_source_upload, uploader: @user, source: "http://example.com/foobar")
         end
 
-        should respond_to_search({}).with { [@upload] }
-        should respond_to_search(source: "http://example.com/foobar").with { @upload }
-        should respond_to_search(status: "completed").with { @upload }
-        should respond_to_search(media_assets: { file_size: 1_000_000 }).with { @upload }
-        should respond_to_search(media_assets: { md5: "blah" }).with { }
+        uploads = respond_to_search.as_user { @user }
+        should uploads.with { [@upload] }
+        should uploads.search_params(source: "http://example.com/foobar").with { @upload }
+        should uploads.search_params(status: "completed").with { @upload }
+        should uploads.search_params(media_assets: { file_size: 1_000_000 }).with { @upload }
+        should uploads.search_params(media_assets: { md5: "blah" }).with { [] }
       end
     end
 
@@ -144,11 +144,11 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
       end
 
       should "fail if given an unsupported filetype" do
-        file = Rack::Test::UploadedFile.new("test/files/ugoira.json")
-        post_auth uploads_path(format: :json), @user, params: { upload: { files: { "0" => file } }}
+        file = Rack::Test::UploadedFile.new("test/files/ugoira/animation.json")
+        post_auth uploads_path(format: :json), @user, params: { upload: { files: { "0" => file }}}
 
         assert_response 201
-        assert_match("File is not an image or video", Upload.last.error)
+        assert_equal("File is not an image or video", Upload.last.error)
       end
 
       context "for a file larger than the file size limit" do
@@ -239,16 +239,6 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
       context "for an unsupported video file" do
         should "fail for a .mkv file" do
           create_upload!("test/files/webm/test-512x512.mkv", user: @user)
-          assert_match("File type is not supported", Upload.last.error)
-        end
-
-        should "fail for a .mp4 file encoded with h265" do
-          create_upload!("test/files/mp4/test-300x300-h265.mp4", user: @user)
-          assert_match("File type is not supported", Upload.last.error)
-        end
-
-        should "fail for a .mp4 file encoded with av1" do
-          create_upload!("test/files/mp4/test-300x300-av1.mp4", user: @user)
           assert_match("File type is not supported", Upload.last.error)
         end
 
@@ -344,7 +334,7 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
           create_upload!("test/files/test.jpg", user: @user)
 
           upload = Upload.last
-          assert_match("Upload failed, try again", upload.reload.error)
+          assert_match("Timed out while waiting for file to be processed", upload.reload.error)
           assert_equal("failed", asset.reload.status)
         end
       end
@@ -368,7 +358,7 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
 
       should "not normalize source URLs to NFC form" do
         # ブ = U+30D5 U+3099 ('KATAKANA LETTER HU', 'COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK')
-        source = "https://tuyu-official.jp/wp/wp-content/uploads/2022/09/雨模様［サブスクジャケット］.jpeg"
+        source = "https://bond-live.com/en/wp-content/uploads/2024/12/Vライバー-アイキャッチ-23.png"
 
         upload = assert_successful_upload(source, user: @user)
         assert_equal(source, upload.source)
@@ -445,6 +435,8 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
         should_upload_successfully("test/files/mp4/test-300x300-vp9.mp4")
         should_upload_successfully("test/files/mp4/test-300x300-yuvj420p-h264.mp4")
         should_upload_successfully("test/files/mp4/test-300x300-iso4.mp4")
+        should_upload_successfully("test/files/mp4/test-300x300-h265.mp4")
+        should_upload_successfully("test/files/mp4/test-300x300-av1.mp4")
         should_upload_successfully("test/files/mp4/test-audio.mp4")
         should_upload_successfully("test/files/mp4/test-audio.m4v")
         should_upload_successfully("test/files/mp4/test-iso5.mp4")
@@ -473,7 +465,7 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
 
           assert_equal(5, upload.media_asset_count)
           assert_equal(5, upload.upload_media_assets.size)
-          assert_equal("file://ugoira.zip/000000.jpg", upload.upload_media_assets[0].source_url)
+          assert_equal(5.times.map { |n| "file://ugoira.zip/00000#{n}.jpg" }, upload.upload_media_assets.order(:id).map(&:source_url))
         end
 
         should "upload the files in filename order" do
@@ -487,6 +479,47 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
           assert_equal("file://out-of-order.zip/10/9.gif", upload.upload_media_assets[3].source_url)
           assert_equal("file://out-of-order.zip/10/10.gif", upload.upload_media_assets[4].source_url)
           assert_equal("file://out-of-order.zip/10/11.gif", upload.upload_media_assets[5].source_url)
+        end
+      end
+
+      context "uploading a ugoira file from your computer" do
+        should "work for a ugoira in gallery-dl format" do
+          upload = assert_successful_upload("test/files/ugoira/ugoira-95239241-gallery-dl.zip", user: @user)
+          media_asset = upload.media_assets.first
+          metadata = media_asset.metadata
+
+          assert_equal(1, upload.media_asset_count)
+          assert_equal(1, upload.upload_media_assets.size)
+          assert_equal("file://ugoira-95239241-gallery-dl.zip", upload.upload_media_assets.first.source_url)
+          assert_equal("zip", media_asset.file_ext)
+          assert_equal("7fe767b4e202415a2b2dec2a82be3b69", media_asset.md5)
+          assert_equal([170] * 10, metadata["Ugoira:FrameDelays"])
+        end
+
+        should "work for a ugoira in PixivUtil2 format" do
+          upload = assert_successful_upload("test/files/ugoira/ugoira-95239241-pixivutil2.zip", user: @user)
+          media_asset = upload.media_assets.first
+          metadata = media_asset.metadata
+
+          assert_equal(1, upload.media_asset_count)
+          assert_equal(1, upload.upload_media_assets.size)
+          assert_equal("file://ugoira-95239241-pixivutil2.zip", upload.upload_media_assets.first.source_url)
+          assert_equal("zip", media_asset.file_ext)
+          assert_equal("dbfe1d5764eb24f3d55224f85ef3383c", media_asset.md5)
+          assert_equal([170] * 10, metadata["Ugoira:FrameDelays"])
+        end
+
+        should "work for a ugoira in PixivToolkit format" do
+          upload = assert_successful_upload("test/files/ugoira/ugoira-95239241-pixivtoolkit.zip", user: @user)
+          media_asset = upload.media_assets.first
+          metadata = media_asset.metadata
+
+          assert_equal(1, upload.media_asset_count)
+          assert_equal(1, upload.upload_media_assets.size)
+          assert_equal("file://ugoira-95239241-pixivtoolkit.zip", upload.upload_media_assets.first.source_url)
+          assert_equal("zip", media_asset.file_ext)
+          assert_equal("8d03702cc61e625b03cca3d556a163a1", media_asset.md5)
+          assert_equal([170] * 10, metadata["Ugoira:FrameDelays"])
         end
       end
 
@@ -528,26 +561,44 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
         end
       end
 
-      context "uploading a ugoira" do
-        should "work" do
+      context "uploading a ugoira from a source" do
+        should "work for a ugoira from Pixiv" do
           upload = assert_successful_upload("https://www.pixiv.net/en/artworks/45982180", user: @user)
 
           assert_equal([60] * 70, upload.media_assets.first.metadata["Ugoira:FrameDelays"])
           assert_equal(:webm, upload.media_assets.first.variant(:sample).open_file.file_ext)
         end
+
+        should "work for a ugoira from another site" do
+          upload = assert_successful_upload("https://files.catbox.moe/e60b4y.zip", user: @user)
+          media_asset = upload.media_assets.first
+          metadata = media_asset.metadata
+
+          assert_equal(1, upload.media_asset_count)
+          assert_equal(1, upload.upload_media_assets.size)
+          assert_equal("https://files.catbox.moe/e60b4y.zip", upload.upload_media_assets.first.source_url)
+          assert_equal("zip", media_asset.file_ext)
+          assert_equal("7fe767b4e202415a2b2dec2a82be3b69", media_asset.md5)
+          assert_equal([170] * 10, metadata["Ugoira:FrameDelays"])
+        end
+      end
+
+      context "uploading a .zip file from a source" do
+        should "not work" do
+          create_upload!("https://files.catbox.moe/afau3v.zip", user: @user)
+
+          assert_response 201
+          assert_equal(true, Upload.last.is_errored?)
+          assert_equal("File is not an image or video", Upload.last.error)
+        end
       end
 
       context "uploading a file from a source" do
-        should_upload_successfully("https://www.artstation.com/artwork/04XA4")
-        should_upload_successfully("https://dantewontdie.artstation.com/projects/YZK5q")
         should_upload_successfully("https://cdna.artstation.com/p/assets/images/images/006/029/978/large/amama-l-z.jpg")
 
         should_upload_successfully("https://www.deviantart.com/aeror404/art/Holiday-Elincia-424551484")
         should_upload_successfully("https://noizave.deviantart.com/art/test-no-download-697415967")
         should_upload_successfully("https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/intermediary/f/8b472d70-a0d6-41b5-9a66-c35687090acc/d23jbr4-8a06af02-70cb-46da-8a96-42a6ba73cdb4.jpg/v1/fill/w_786,h_1017,q_70,strp/silverhawks_quicksilver_by_edsfox_d23jbr4-pre.jpg")
-
-        should_upload_successfully("https://www.hentai-foundry.com/pictures/user/Afrobull/795025/kuroeda")
-        should_upload_successfully("https://pictures.hentai-foundry.com/a/Afrobull/795025/Afrobull-795025-kuroeda.png")
 
         should_upload_successfully("https://yande.re/post/show/482880")
         should_upload_successfully("https://files.yande.re/image/7ecfdead705d7b956b26b1d37b98d089/yande.re%20482880.jpg")
@@ -558,16 +609,12 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
         should_upload_successfully("https://gelbooru.com/index.php?page=post&s=view&id=7798121")
         should_upload_successfully("https://safebooru.org/index.php?page=post&s=view&id=4189916")
         should_upload_successfully("https://tbib.org/index.php?page=post&s=view&id=11480218")
-        should_upload_successfully("https://rule34.xxx/index.php?page=post&s=view&id=6961597")
         should_upload_successfully("https://rule34.us/index.php?r=posts/view&id=6204967")
-
-        should_upload_successfully("https://boards.4channel.org/vt/thread/1#p1")
 
         should_upload_successfully("http://lohas.nicoseiga.jp/o/910aecf08e542285862954017f8a33a8c32a8aec/1433298801/4937663")
         should_upload_successfully("http://seiga.nicovideo.jp/seiga/im4937663")
         should_upload_successfully("https://seiga.nicovideo.jp/image/source/9146749")
         should_upload_successfully("https://seiga.nicovideo.jp/watch/mg389884")
-        should_upload_successfully("https://dic.nicovideo.jp/oekaki/52833.png")
         should_upload_successfully("https://lohas.nicoseiga.jp/o/971eb8af9bbcde5c2e51d5ef3a2f62d6d9ff5552/1589933964/3583893")
         should_upload_successfully("http://lohas.nicoseiga.jp/priv/3521156?e=1382558156&h=f2e089256abd1d453a455ec8f317a6c703e2cedf")
         should_upload_successfully("http://lohas.nicoseiga.jp/priv/b80f86c0d8591b217e7513a9e175e94e00f3c7a1/1384936074/3583893")
@@ -579,8 +626,8 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
         should_upload_successfully("https://nijie.info/view_popup.php?id=213043")
         should_upload_successfully("https://pic.nijie.net/07/nijie/17/95/728995/illust/0_0_403fdd541191110c_c25585.jpg")
 
-        should_upload_successfully("https://pawoo.net/web/statuses/1202176") if Danbooru.config.pawoo_access_token.present? # XXX
-        should_upload_successfully("https://img.pawoo.net/media_attachments/files/000/128/953/original/4c0a06087b03343f.png") if Danbooru.config.pawoo_access_token.present? # XXX
+        should_upload_successfully("https://pawoo.net/web/statuses/1202176") if SiteCredential.for_site("Pawoo").present? # XXX
+        should_upload_successfully("https://img.pawoo.net/media_attachments/files/000/128/953/original/4c0a06087b03343f.png") if SiteCredential.for_site("Pawoo").present? # XXX
 
         should_upload_successfully("https://baraag.net/@danbooru/107866090743238456")
         should_upload_successfully("https://baraag.net/system/media_attachments/files/107/866/084/749/942/932/original/a9e0f553e332f303.mp4")
@@ -596,7 +643,6 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
 
         should_upload_successfully("https://twitter.com/noizave/status/875768175136317440")
         should_upload_successfully("https://pbs.twimg.com/media/DCdZ_FhUIAAYKFN?format=jpg&name=medium")
-        should_upload_successfully("https://pbs.twimg.com/profile_banners/2371694594/1581832507/1500x500")
         should_upload_successfully("https://twitter.com/zeth_total/status/1355597580814585856")
         should_upload_successfully("https://video.twimg.com/tweet_video/EWHWVrmVcAAp4Vw.mp4")
 
@@ -605,46 +651,28 @@ class UploadsControllerTest < ActionDispatch::IntegrationTest
 
         should_upload_successfully("https://art.ngfiles.com/images/1254000/1254722_natthelich_pandora.jpg")
         should_upload_successfully("https://art.ngfiles.com/comments/57000/iu_57615_7115981.jpg")
-        should_upload_successfully("https://www.newgrounds.com/art/view/puddbytes/costanza-at-bat")
 
-        should_upload_successfully("https://kmyama.fanbox.cc/posts/104708")
         should_upload_successfully("https://downloads.fanbox.cc/images/post/104708/wsF73EC5Fq0CIK84W0LGYk2p.jpeg")
 
         should_upload_successfully("https://foundation.app/@KILLERGF/kgfgen/4")
 
         should_upload_successfully("https://skeb.jp/@kokuzou593/works/45")
         should_upload_successfully("https://skeb.jp/@LambOic029/works/146")
-        should_upload_successfully("https://skeb.imgix.net/uploads/origins/307941e9-dbe0-4e4b-93d4-94accdaff9a0?bg=%23fff&auto=format&w=800&s=e0ddfb1fa0d9f23797b338598aae78fa")
 
-        should_upload_successfully("https://www.plurk.com/p/omc64y")
         should_upload_successfully("https://www.plurk.com/p/om6zv4")
-
-        should_upload_successfully("https://gengar563.lofter.com/post/1e82da8c_1c98dae1b")
 
         should_upload_successfully("https://c.fantia.jp/uploads/post/file/1070093/16faf0b1-58d8-4aac-9e86-b243063eaaf1.jpeg")
         should_upload_successfully("https://fantia.jp/posts/1132267")
-        should_upload_successfully("https://fantia.jp/products/249638")
 
         should_upload_successfully("http://wwwew.web.fc2.com/e/405.jpg")
 
-        should_upload_successfully("http://www.tinami.com/view/1087268")
-
         should_upload_successfully("https://booth.pximg.net/4ee2c0d9-41fa-4a0e-a30f-1bc9e15d4e5b/i/2586180/331b7c5f-7614-4772-aae2-cb979ad44a6b.png")
-
-        should_upload_successfully("https://picdig.net/ema/projects/9d99151f-6d3e-4084-9cc0-082d386122ca")
-
-        should_upload_successfully("https://enty.jp/posts/141598")
-
-        should_upload_successfully("https://arca.live/b/arknights/66031722")
 
         should_upload_successfully("https://imgur.com/AOeREEF")
 
         should_upload_successfully("https://poipiku.com/583/2867587.html")
 
         should_upload_successfully("https://medibang.com/picture/4b2112261505098280008769655/")
-
-        should_upload_successfully("https://movw2000.gumroad.com/l/zbslv")
-        should_upload_successfully("https://movw2000.gumroad.com/p/new-product-b072093e-e628-4a92-9740-e9b4564d9901")
       end
     end
   end

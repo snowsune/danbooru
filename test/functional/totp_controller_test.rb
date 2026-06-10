@@ -53,20 +53,20 @@ class TOTPControllerTest < ActionDispatch::IntegrationTest
           @user = create(:user)
           @totp = TOTP.new
 
-          put_auth user_totp_path(user_id: @user), @user, params: { totp: { signed_secret: @totp.signed_secret, verification_code: @totp.code } }
+          put_auth user_totp_path(user_id: @user), @user, params: { totp: { signed_secret: @totp.signed_secret, verification_code: @totp.code }}
 
           assert_redirected_to user_backup_codes_path(@user, url: settings_path)
           assert_equal(true, @user.reload.totp.present?)
           assert_equal(true, @user.totp_secret.present?)
           assert_equal(true, @user.backup_codes.present?)
-          assert_equal(true, @user.user_events.totp_enable.exists?)
+          assert_equal(true, @user.user_events.totp_enable.exists?(login_session_id: @user.login_sessions.last.login_id))
         end
 
         should "not allow a user to enable 2FA for another user" do
           @user = create(:user)
           @totp = TOTP.new
 
-          put_auth user_totp_path(user_id: @user), create(:user), params: { totp: { signed_secret: @totp.signed_secret, verification_code: @totp.code } }
+          put_auth user_totp_path(user_id: @user), create(:user), params: { totp: { signed_secret: @totp.signed_secret, verification_code: @totp.code }}
 
           assert_response 403
           assert_equal(false, @user.reload.totp.present?)
@@ -94,7 +94,7 @@ class TOTPControllerTest < ActionDispatch::IntegrationTest
           @user = create(:user)
           @totp = TOTP.new
 
-          put_auth user_totp_path(user_id: @user), @user, params: { totp: { signed_secret: @totp.signed_secret, verification_code: "invalid" } }
+          put_auth user_totp_path(user_id: @user), @user, params: { totp: { signed_secret: @totp.signed_secret, verification_code: "invalid" }}
 
           assert_response :success
           assert_equal(false, @user.reload.totp.present?)
@@ -115,7 +115,7 @@ class TOTPControllerTest < ActionDispatch::IntegrationTest
         assert_equal(false, @user.reload.totp.present?)
         assert_nil(@user.totp_secret)
         assert_nil(@user.backup_codes)
-        assert_equal(true, @user.user_events.totp_disable.exists?)
+        assert_equal(true, @user.user_events.totp_disable.exists?(login_session_id: @user.login_sessions.last.login_id))
       end
 
       should "not allow a user to disable 2FA for another user" do

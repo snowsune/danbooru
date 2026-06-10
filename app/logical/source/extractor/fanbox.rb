@@ -5,8 +5,10 @@ module Source
   class Extractor
     class Fanbox < Source::Extractor
       def image_urls
-        if parsed_url.image_url?
+        if parsed_url.full_image_url.present?
           [parsed_url.full_image_url]
+        elsif parsed_url.candidate_full_image_urls.present?
+          [parsed_url.candidate_full_image_urls.find { |url| http_exists?(url) } || url.to_s]
         elsif api_response.present?
           file_list
         else
@@ -36,6 +38,8 @@ module Source
       def page_url
         if username.present? && illust_id.present?
           "https://#{username}.fanbox.cc/posts/#{illust_id}"
+        elsif illust_id.present?
+          "https://www.fanbox.cc/manage/posts/#{illust_id}"
         elsif parsed_url.image_url? && username.present?
           # Cover images
           "https://#{username}.fanbox.cc"
@@ -78,12 +82,12 @@ module Source
           # I've left out parsing external embeds because each supported site has its own id mapped to the domain
           commentary = body["blocks"].map do |node|
             if node["type"] == "image"
-              body["imageMap"][node["imageId"]]["originalUrl"]
+              body["imageMap"].dig(node["imageId"], "originalUrl")
             else
               node["text"] || "\n"
             end
           end
-          commentary.join("\n")
+          commentary.join("\n").gsub(/\n{3,}/, "\n\n")
         end
       end
 
@@ -95,24 +99,24 @@ module Source
         parsed_url.user_id || parsed_referer&.user_id
       end
 
-      def post_api_url
-        "https://api.fanbox.cc/post.info?postId=#{illust_id}" if illust_id.present?
-      end
-
-      def artist_api_url
-        "https://api.fanbox.cc/creator.get?userId=#{artist_id_from_url}" if artist_id_from_url.present?
+      memoize def username_from_artist_id
+        url = http.cache(1.minute).redirect_url("https://www.pixiv.net/fanbox/creator/#{artist_id_from_url}") if artist_id_from_url.present?
+        Source::URL.parse(url).try(:username)
       end
 
       memoize def api_response
-        http.cache(1.minute).parsed_get(post_api_url)&.dig(:body) || {}
+        url = "https://api.fanbox.cc/post.info?postId=#{illust_id}" if illust_id.present?
+        parsed_get(url)&.dig(:body) || {}
       end
 
       memoize def artist_api_response
-        http.cache(1.minute).parsed_get(artist_api_url) || {}
+        creator_id = parsed_url.username || parsed_referer&.username || api_response["creatorId"] || username_from_artist_id
+        url = "https://api.fanbox.cc/creator.get?creatorId=#{creator_id}"
+        parsed_get(url) || {}
       end
 
       def http
-        super.headers(Origin: "https://fanbox.cc")
+        super.with_legacy_ssl.headers(Origin: "https://fanbox.cc")
       end
     end
   end

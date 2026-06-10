@@ -17,9 +17,9 @@ class TagRelationship < ApplicationRecord
   belongs_to :consequent_wiki, class_name: "WikiPage", foreign_key: "consequent_name", primary_key: "title", optional: true
   has_many :mod_actions, as: :subject, dependent: :destroy
 
-  scope :active, -> {where(status: "active")}
-  scope :deleted, -> {where(status: "deleted")}
-  scope :retired, -> {where(status: "retired")}
+  scope :active, -> { where(status: "active") }
+  scope :deleted, -> { where(status: "deleted") }
+  scope :retired, -> { where(status: "retired") }
 
   # TagAlias.artist, TagAlias.general, TagAlias.character, TagAlias.copyright, TagAlias.meta
   # TagImplication.artist, TagImplication.general, TagImplication.character, TagImplication.copyright, TagImplication.meta
@@ -27,18 +27,14 @@ class TagRelationship < ApplicationRecord
     scope category, -> { joins(:consequent_tag).where(consequent_tag: { category: TagCategory.mapping[category] }) }
   end
 
-  before_validation :normalize_names
+  normalizes :antecedent_name, :consequent_name, with: ->(name) { Tag.normalize_name(name) }
+
   validates :status, inclusion: { in: STATUSES }
   validates :antecedent_name, presence: true, tag_name: true, if: :antecedent_name_changed?
   validates :consequent_name, presence: true, tag_name: true, if: :consequent_name_changed?
   validates :approver, presence: { message: "must exist" }, if: -> { approver_id.present? }
   validates :forum_topic, presence: { message: "must exist" }, if: -> { forum_topic_id.present? }
   validate :antecedent_and_consequent_are_different
-
-  def normalize_names
-    self.antecedent_name = antecedent_name.downcase.tr(" ", "_")
-    self.consequent_name = consequent_name.downcase.tr(" ", "_")
-  end
 
   def is_rejected?
     status.in?(%w[retired deleted])
@@ -63,7 +59,7 @@ class TagRelationship < ApplicationRecord
     update!(status: "deleted")
 
     if rejector != User.system
-      category = relationship == "tag alias" ? :tag_alias_delete : :tag_implication_delete
+      category = (relationship == "tag alias") ? :tag_alias_delete : :tag_implication_delete
       ModAction.log("deleted #{relationship} #{antecedent_name} -> #{consequent_name}", category, subject: self, user: rejector)
     end
   end
@@ -74,11 +70,11 @@ class TagRelationship < ApplicationRecord
     end
 
     def consequent_name_matches(name)
-      where_like(:consequent_name, Tag.normalize_name(name))
+      where_like(:consequent_name, normalize_value_for(:consequent_name, name))
     end
 
     def antecedent_name_matches(name)
-      where_like(:antecedent_name, Tag.normalize_name(name))
+      where_like(:antecedent_name, normalize_value_for(:antecedent_name, name))
     end
 
     def status_matches(status)
@@ -86,7 +82,7 @@ class TagRelationship < ApplicationRecord
     end
 
     def search(params, current_user)
-      q = search_attributes(params, [:id, :created_at, :updated_at, :antecedent_name, :consequent_name, :reason, :creator, :approver, :forum_post, :forum_topic, :antecedent_tag, :consequent_tag, :antecedent_wiki, :consequent_wiki], current_user: current_user)
+      q = search_attributes(params, %i[id created_at updated_at antecedent_name consequent_name reason creator approver forum_post forum_topic antecedent_tag consequent_tag antecedent_wiki consequent_wiki], current_user: current_user)
 
       if params[:name_matches].present?
         q = q.name_matches(params[:name_matches])
@@ -115,7 +111,9 @@ class TagRelationship < ApplicationRecord
         q = q.order(updated_at: :desc)
       when "name"
         q = q.order(antecedent_name: :asc, consequent_name: :asc)
-      when "tag_count"
+      when "antecedent_tag_count"
+        q = q.joins(:antecedent_tag).order("tags.post_count DESC", antecedent_name: :asc, consequent_name: :asc)
+      when "consequent_tag_count"
         q = q.joins(:consequent_tag).order("tags.post_count DESC", antecedent_name: :asc, consequent_name: :asc)
       else
         q = q.apply_default_order(params)

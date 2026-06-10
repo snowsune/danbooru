@@ -10,6 +10,20 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: btree_gin; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION btree_gin; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION btree_gin IS 'support for indexing common datatypes in GIN';
+
+
+--
 -- Name: fuzzystrmatch; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -835,7 +849,8 @@ CREATE TABLE public.good_job_batches (
     callback_priority integer,
     enqueued_at timestamp(6) without time zone,
     discarded_at timestamp(6) without time zone,
-    finished_at timestamp(6) without time zone
+    finished_at timestamp(6) without time zone,
+    jobs_finished_at timestamp(6) without time zone
 );
 
 
@@ -856,7 +871,8 @@ CREATE TABLE public.good_job_executions (
     error text,
     error_event smallint,
     error_backtrace text[],
-    process_id uuid
+    process_id uuid,
+    duration interval
 );
 
 
@@ -998,6 +1014,41 @@ CREATE SEQUENCE public.ip_geolocations_id_seq
 --
 
 ALTER SEQUENCE public.ip_geolocations_id_seq OWNED BY public.ip_geolocations.id;
+
+
+--
+-- Name: login_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.login_sessions (
+    id bigint NOT NULL,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    user_id bigint NOT NULL,
+    login_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    status integer NOT NULL,
+    last_seen_at timestamp(6) without time zone
+);
+
+
+--
+-- Name: login_sessions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.login_sessions_id_seq
+    START WITH 10000000
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: login_sessions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.login_sessions_id_seq OWNED BY public.login_sessions.id;
 
 
 --
@@ -1264,22 +1315,23 @@ ALTER SEQUENCE public.notes_id_seq OWNED BY public.notes.id;
 --
 
 CREATE TABLE public.pool_versions (
-    id bigint NOT NULL,
-    created_at timestamp(6) without time zone NOT NULL,
-    updated_at timestamp(6) without time zone NOT NULL,
-    pool_id bigint NOT NULL,
-    updater_id bigint NOT NULL,
+    id integer NOT NULL,
+    created_at timestamp(6) without time zone,
+    updated_at timestamp(6) without time zone,
+    pool_id integer NOT NULL,
+    updater_id integer,
     version integer DEFAULT 1 NOT NULL,
-    name text NOT NULL,
-    description text DEFAULT ''::text NOT NULL,
-    category character varying NOT NULL,
+    name text,
+    description text,
+    category character varying,
     is_active boolean DEFAULT true NOT NULL,
     is_deleted boolean DEFAULT false NOT NULL,
     description_changed boolean DEFAULT false NOT NULL,
     name_changed boolean DEFAULT false NOT NULL,
     post_ids integer[] DEFAULT '{}'::integer[] NOT NULL,
     added_post_ids integer[] DEFAULT '{}'::integer[] NOT NULL,
-    removed_post_ids integer[] DEFAULT '{}'::integer[] NOT NULL
+    removed_post_ids integer[] DEFAULT '{}'::integer[] NOT NULL,
+    "boolean" boolean DEFAULT false NOT NULL
 );
 
 
@@ -1632,19 +1684,18 @@ ALTER SEQUENCE public.post_replacements_id_seq OWNED BY public.post_replacements
 --
 
 CREATE TABLE public.post_versions (
-    id bigint NOT NULL,
-    created_at timestamp(6) without time zone NOT NULL,
-    updated_at timestamp(6) without time zone NOT NULL,
-    post_id bigint NOT NULL,
-    updater_id bigint NOT NULL,
+    id integer NOT NULL,
+    updated_at timestamp without time zone NOT NULL,
+    post_id integer NOT NULL,
+    updater_id integer,
     version integer DEFAULT 1 NOT NULL,
     parent_changed boolean DEFAULT false NOT NULL,
     rating_changed boolean DEFAULT false NOT NULL,
     source_changed boolean DEFAULT false NOT NULL,
     parent_id integer,
-    rating character varying(1) NOT NULL,
-    source text DEFAULT ''::text NOT NULL,
-    tags text DEFAULT ''::text NOT NULL,
+    rating character varying(1),
+    source text,
+    tags text NOT NULL,
     added_tags text[] DEFAULT '{}'::text[] NOT NULL,
     removed_tags text[] DEFAULT '{}'::text[] NOT NULL
 );
@@ -1835,6 +1886,47 @@ ALTER SEQUENCE public.saved_searches_id_seq OWNED BY public.saved_searches.id;
 CREATE TABLE public.schema_migrations (
     version character varying NOT NULL
 );
+
+
+--
+-- Name: site_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.site_credentials (
+    id bigint NOT NULL,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    site integer NOT NULL,
+    creator_id bigint NOT NULL,
+    is_enabled boolean DEFAULT true NOT NULL,
+    is_public boolean DEFAULT true NOT NULL,
+    status integer DEFAULT 0 NOT NULL,
+    usage_count integer DEFAULT 0 NOT NULL,
+    error_count integer DEFAULT 0 NOT NULL,
+    last_used_at timestamp(6) without time zone,
+    last_error_at timestamp(6) without time zone,
+    credential jsonb DEFAULT '{}'::jsonb NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL
+);
+
+
+--
+-- Name: site_credentials_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.site_credentials_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: site_credentials_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.site_credentials_id_seq OWNED BY public.site_credentials.id;
 
 
 --
@@ -2036,7 +2128,8 @@ CREATE TABLE public.upload_media_assets (
     status integer DEFAULT 0 NOT NULL,
     source_url character varying DEFAULT ''::character varying NOT NULL,
     error character varying,
-    page_url character varying
+    page_url character varying,
+    user_id integer NOT NULL
 );
 
 
@@ -2105,12 +2198,13 @@ CREATE TABLE public.user_events (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     user_id integer NOT NULL,
-    user_session_id integer NOT NULL,
+    user_session_id integer,
     category integer NOT NULL,
     ip_addr inet,
     session_id uuid,
     user_agent character varying,
-    metadata jsonb
+    metadata jsonb,
+    login_session_id uuid
 );
 
 
@@ -2793,6 +2887,13 @@ ALTER TABLE ONLY public.ip_geolocations ALTER COLUMN id SET DEFAULT nextval('pub
 
 
 --
+-- Name: login_sessions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.login_sessions ALTER COLUMN id SET DEFAULT nextval('public.login_sessions_id_seq'::regclass);
+
+
+--
 -- Name: media_assets id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -2930,6 +3031,13 @@ ALTER TABLE ONLY public.reactions ALTER COLUMN id SET DEFAULT nextval('public.re
 --
 
 ALTER TABLE ONLY public.saved_searches ALTER COLUMN id SET DEFAULT nextval('public.saved_searches_id_seq'::regclass);
+
+
+--
+-- Name: site_credentials id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.site_credentials ALTER COLUMN id SET DEFAULT nextval('public.site_credentials_id_seq'::regclass);
 
 
 --
@@ -3254,6 +3362,14 @@ ALTER TABLE ONLY public.ip_geolocations
 
 
 --
+-- Name: login_sessions login_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.login_sessions
+    ADD CONSTRAINT login_sessions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: media_assets media_assets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3419,6 +3535,14 @@ ALTER TABLE ONLY public.saved_searches
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: site_credentials site_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.site_credentials
+    ADD CONSTRAINT site_credentials_pkey PRIMARY KEY (id);
 
 
 --
@@ -4368,10 +4492,10 @@ CREATE UNIQUE INDEX index_good_job_settings_on_key ON public.good_job_settings U
 
 
 --
--- Name: index_good_jobs_jobs_on_finished_at; Type: INDEX; Schema: public; Owner: -
+-- Name: index_good_jobs_jobs_on_finished_at_only; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX index_good_jobs_jobs_on_finished_at ON public.good_jobs USING btree (finished_at) WHERE ((retried_good_job_id IS NULL) AND (finished_at IS NOT NULL));
+CREATE INDEX index_good_jobs_jobs_on_finished_at_only ON public.good_jobs USING btree (finished_at) WHERE (finished_at IS NOT NULL);
 
 
 --
@@ -4403,6 +4527,13 @@ CREATE INDEX index_good_jobs_on_batch_id ON public.good_jobs USING btree (batch_
 
 
 --
+-- Name: index_good_jobs_on_concurrency_key_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_good_jobs_on_concurrency_key_and_created_at ON public.good_jobs USING btree (concurrency_key, created_at);
+
+
+--
 -- Name: index_good_jobs_on_concurrency_key_when_unfinished; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4421,6 +4552,13 @@ CREATE INDEX index_good_jobs_on_cron_key_and_created_at_cond ON public.good_jobs
 --
 
 CREATE UNIQUE INDEX index_good_jobs_on_cron_key_and_cron_at_cond ON public.good_jobs USING btree (cron_key, cron_at) WHERE (cron_key IS NOT NULL);
+
+
+--
+-- Name: index_good_jobs_on_job_class; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_good_jobs_on_job_class ON public.good_jobs USING btree (job_class);
 
 
 --
@@ -4582,6 +4720,55 @@ CREATE INDEX index_ip_geolocations_on_time_zone ON public.ip_geolocations USING 
 --
 
 CREATE INDEX index_ip_geolocations_on_updated_at ON public.ip_geolocations USING btree (updated_at);
+
+
+--
+-- Name: index_login_sessions_on_created_at_and_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_login_sessions_on_created_at_and_id ON public.login_sessions USING btree (created_at, id);
+
+
+--
+-- Name: index_login_sessions_on_last_seen_at_and_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_login_sessions_on_last_seen_at_and_id ON public.login_sessions USING btree (last_seen_at, id);
+
+
+--
+-- Name: index_login_sessions_on_login_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_login_sessions_on_login_id ON public.login_sessions USING btree (login_id);
+
+
+--
+-- Name: index_login_sessions_on_session_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_login_sessions_on_session_id ON public.login_sessions USING btree (session_id);
+
+
+--
+-- Name: index_login_sessions_on_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_login_sessions_on_status ON public.login_sessions USING btree (status);
+
+
+--
+-- Name: index_login_sessions_on_updated_at_and_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_login_sessions_on_updated_at_and_id ON public.login_sessions USING btree (updated_at, id);
+
+
+--
+-- Name: index_login_sessions_on_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_login_sessions_on_user_id ON public.login_sessions USING btree (user_id);
 
 
 --
@@ -5152,13 +5339,6 @@ CREATE INDEX index_post_versions_on_added_tags ON public.post_versions USING btr
 
 
 --
--- Name: index_post_versions_on_created_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX index_post_versions_on_created_at ON public.post_versions USING btree (created_at);
-
-
---
 -- Name: index_post_versions_on_parent_changed; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5212,6 +5392,13 @@ CREATE INDEX index_post_versions_on_updater_id ON public.post_versions USING btr
 --
 
 CREATE INDEX index_post_versions_on_version ON public.post_versions USING btree (version);
+
+
+--
+-- Name: index_post_versons_on_updater_id_and_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_post_versons_on_updater_id_and_id ON public.post_versions USING btree (updater_id, id);
 
 
 --
@@ -5437,6 +5624,83 @@ CREATE INDEX index_sent_dmails_on_created_at ON public.dmails USING btree (creat
 --
 
 CREATE INDEX index_sent_dmails_on_owner_id_and_created_at ON public.dmails USING btree (owner_id, created_at) WHERE (owner_id = from_id);
+
+
+--
+-- Name: index_site_credentials_on_creator_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_creator_id ON public.site_credentials USING btree (creator_id);
+
+
+--
+-- Name: index_site_credentials_on_credential; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_credential ON public.site_credentials USING gin (credential);
+
+
+--
+-- Name: index_site_credentials_on_error_count; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_error_count ON public.site_credentials USING btree (error_count);
+
+
+--
+-- Name: index_site_credentials_on_is_enabled; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_is_enabled ON public.site_credentials USING btree (is_enabled);
+
+
+--
+-- Name: index_site_credentials_on_is_public; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_is_public ON public.site_credentials USING btree (is_public);
+
+
+--
+-- Name: index_site_credentials_on_last_error_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_last_error_at ON public.site_credentials USING btree (last_error_at);
+
+
+--
+-- Name: index_site_credentials_on_last_used_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_last_used_at ON public.site_credentials USING btree (last_used_at);
+
+
+--
+-- Name: index_site_credentials_on_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_metadata ON public.site_credentials USING gin (metadata);
+
+
+--
+-- Name: index_site_credentials_on_site; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_site ON public.site_credentials USING btree (site);
+
+
+--
+-- Name: index_site_credentials_on_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_status ON public.site_credentials USING btree (status);
+
+
+--
+-- Name: index_site_credentials_on_usage_count; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_site_credentials_on_usage_count ON public.site_credentials USING btree (usage_count);
 
 
 --
@@ -5706,6 +5970,20 @@ CREATE INDEX index_upload_media_assets_on_upload_id ON public.upload_media_asset
 
 
 --
+-- Name: index_upload_media_assets_on_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_upload_media_assets_on_user_id ON public.upload_media_assets USING btree (user_id);
+
+
+--
+-- Name: index_upload_media_assets_on_user_id_and_source_url; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_upload_media_assets_on_user_id_and_source_url ON public.upload_media_assets USING gin (user_id, source_url public.gin_trgm_ops);
+
+
+--
 -- Name: index_uploads_on_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5727,20 +6005,6 @@ CREATE INDEX index_uploads_on_media_asset_count ON public.uploads USING btree (m
 
 
 --
--- Name: index_uploads_on_referer_url; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX index_uploads_on_referer_url ON public.uploads USING btree (referer_url);
-
-
---
--- Name: index_uploads_on_source; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX index_uploads_on_source ON public.uploads USING btree (source);
-
-
---
 -- Name: index_uploads_on_uploader_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5752,6 +6016,20 @@ CREATE INDEX index_uploads_on_uploader_id ON public.uploads USING btree (uploade
 --
 
 CREATE INDEX index_uploads_on_uploader_id_and_created_at_and_id ON public.uploads USING btree (uploader_id, created_at, id);
+
+
+--
+-- Name: index_uploads_on_uploader_id_and_referer_url; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_uploads_on_uploader_id_and_referer_url ON public.uploads USING gin (uploader_id, referer_url public.gin_trgm_ops);
+
+
+--
+-- Name: index_uploads_on_uploader_id_and_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_uploads_on_uploader_id_and_source ON public.uploads USING gin (uploader_id, source public.gin_trgm_ops);
 
 
 --
@@ -5773,6 +6051,24 @@ CREATE INDEX index_user_events_on_created_at ON public.user_events USING btree (
 --
 
 CREATE INDEX index_user_events_on_ip_addr ON public.user_events USING btree (ip_addr);
+
+
+--
+-- Name: index_user_events_on_ip_addr_subnet; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_user_events_on_ip_addr_subnet ON public.user_events USING btree (network(set_masklen(ip_addr,
+CASE
+    WHEN (family(ip_addr) = 4) THEN 24
+    ELSE 64
+END)));
+
+
+--
+-- Name: index_user_events_on_login_session_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_user_events_on_login_session_id ON public.user_events USING btree (login_session_id);
 
 
 --
@@ -6280,6 +6576,14 @@ ALTER TABLE ONLY public.api_keys
 
 
 --
+-- Name: site_credentials fk_rails_32d18ae384; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.site_credentials
+    ADD CONSTRAINT fk_rails_32d18ae384 FOREIGN KEY (creator_id) REFERENCES public.users(id);
+
+
+--
 -- Name: tag_versions fk_rails_373a0aa141; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6560,6 +6864,22 @@ ALTER TABLE ONLY public.bulk_update_requests
 
 
 --
+-- Name: user_events fk_rails_89475bdf6f; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_events
+    ADD CONSTRAINT fk_rails_89475bdf6f FOREIGN KEY (login_session_id) REFERENCES public.login_sessions(login_id);
+
+
+--
+-- Name: login_sessions fk_rails_8c949dd2cd; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.login_sessions
+    ADD CONSTRAINT fk_rails_8c949dd2cd FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
 -- Name: tag_aliases fk_rails_90fd158a45; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6720,6 +7040,14 @@ ALTER TABLE ONLY public.upgrade_codes
 
 
 --
+-- Name: upload_media_assets fk_rails_d61d4a2ba9; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upload_media_assets
+    ADD CONSTRAINT fk_rails_d61d4a2ba9 FOREIGN KEY (user_id) REFERENCES public.users(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
 -- Name: tag_implications fk_rails_dba2c19f93; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6830,6 +7158,23 @@ ALTER TABLE ONLY public.user_upgrades
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260323172054'),
+('20260323172053'),
+('20260323172052'),
+('20260309181625'),
+('20260309171518'),
+('20250720155738'),
+('20250718142035'),
+('20250716202530'),
+('20250716150524'),
+('20250603085358'),
+('20250601164359'),
+('20250601164357'),
+('20250601164355'),
+('20250530193107'),
+('20250530193106'),
+('20250530091115'),
+('20250507024608'),
 ('20241030061431'),
 ('20241023173028'),
 ('20241023091114'),
@@ -7164,4 +7509,3 @@ INSERT INTO "schema_migrations" (version) VALUES
 ('20100205162521'),
 ('20100204214746'),
 ('20100204211522');
-

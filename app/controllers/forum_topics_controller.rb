@@ -4,22 +4,9 @@ class ForumTopicsController < ApplicationController
   respond_to :html, :xml, :json
   respond_to :atom, only: [:index, :show]
 
-  before_action :normalize_search, :only => :index
+  before_action :normalize_search, only: :index
   before_action if: -> { request.format.html? && !Danbooru.config.forum_enabled?.to_s.truthy? } do
     redirect_to root_path
-  end
-
-  rate_limit :create, rate: 1.0/1.minute, burst: 50
-
-  def new
-    @forum_topic = authorize ForumTopic.new
-    @forum_topic.original_post = ForumPost.new
-    respond_with(@forum_topic)
-  end
-
-  def edit
-    @forum_topic = authorize ForumTopic.find(params[:id])
-    respond_with(@forum_topic)
   end
 
   def index
@@ -55,10 +42,25 @@ class ForumTopicsController < ApplicationController
     respond_with(@forum_topic)
   end
 
+  def new
+    @forum_topic = authorize ForumTopic.new
+    @forum_topic.original_post = ForumPost.new
+    respond_with(@forum_topic)
+  end
+
+  def edit
+    @forum_topic = authorize ForumTopic.find(params[:id])
+    respond_with(@forum_topic)
+  end
+
   def create
-    @forum_topic = authorize ForumTopic.new(creator: CurrentUser.user, **permitted_attributes(ForumTopic))
-    @forum_topic.original_post.creator = CurrentUser.user
-    @forum_topic.original_post.creator_ip_addr = request.remote_ip
+    @forum_topic = authorize ForumTopic.new(permitted_attributes(ForumTopic).deep_merge(
+      creator: CurrentUser.user,
+      original_post_attributes: {
+        creator: CurrentUser.user,
+        creator_ip_addr: request.remote_ip,
+      },
+    ))
     @forum_topic.save
 
     respond_with(@forum_topic)
@@ -66,31 +68,29 @@ class ForumTopicsController < ApplicationController
 
   def update
     @forum_topic = authorize ForumTopic.find(params[:id])
-    @forum_topic.update(permitted_attributes(@forum_topic))
+    @forum_topic.update(updater: CurrentUser.user, **permitted_attributes(@forum_topic))
     respond_with(@forum_topic)
   end
 
   def destroy
     @forum_topic = authorize ForumTopic.find(params[:id])
-    @forum_topic.update(is_deleted: true)
-    @forum_topic.create_mod_action_for_delete
-    flash[:notice] = "Topic deleted"
-    respond_with(@forum_topic)
+    @forum_topic.soft_delete!(updater: CurrentUser.user)
+
+    respond_with(@forum_topic, notice: "Topic deleted")
   end
 
   def undelete
     @forum_topic = authorize ForumTopic.find(params[:id])
-    @forum_topic.update(is_deleted: false)
-    @forum_topic.create_mod_action_for_undelete
-    flash[:notice] = "Topic undeleted"
-    respond_with(@forum_topic)
+    @forum_topic.undelete!(updater: CurrentUser.user)
+
+    respond_with(@forum_topic, notice: "Topic undeleted")
   end
 
   def mark_all_as_read
     authorize ForumTopic
     CurrentUser.user.update(last_forum_read_at: Time.zone.now)
     ForumTopicVisit.prune!(CurrentUser.user)
-    redirect_to forum_topics_path, :notice => "All topics marked as read"
+    redirect_to forum_topics_path, notice: "All topics marked as read"
   end
 
   private

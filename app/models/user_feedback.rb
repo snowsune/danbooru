@@ -9,13 +9,22 @@ class UserFeedback < ApplicationRecord
 
   belongs_to :user
   belongs_to :creator, class_name: "User"
-  validates :body, visible_string: true
+
+  validates :body, visible_string: true, length: { maximum: 1500 }, if: :body_changed?
   validates :category, presence: true, inclusion: { in: %w[positive negative neutral] }
   after_create :create_dmail, unless: :disable_dmail_notification
   after_update :create_mod_action
 
   deletable
 
+  # Feedback generation from bans has changed several times over the years. However they all start like one of the following:
+  # "Blocked: "
+  # "Banned: "
+  # "Banned forever: "
+  # "Banned for <duration>: "
+  # "Banned <duration>: "
+  scope :ban,      -> { where("body ~ '^Banned(:| for| [0-9])|Blocked:'") }
+  scope :not_ban,  -> { where("body !~ '^Banned(:| for| [0-9])|Blocked:'") }
   scope :positive, -> { where(category: "positive") }
   scope :neutral,  -> { where(category: "neutral") }
   scope :negative, -> { where(category: "negative") }
@@ -33,13 +42,7 @@ class UserFeedback < ApplicationRecord
       q = search_attributes(params, [:id, :created_at, :updated_at, :category, :body, :is_deleted, :creator, :user], current_user: current_user)
 
       if params[:hide_bans].to_s.truthy?
-        # Feedback generation from bans has changed several times over the years. However they all start like one of the following:
-        # "Blocked: "
-        # "Banned: "
-        # "Banned forever: "
-        # "Banned for <duration>: "
-        # "Banned <duration>: "
-        q = q.where("body ~ '^(?!Banned(:| for| [0-9])|Blocked:)'")
+        q = q.not_ban
       end
 
       q.apply_default_order(params)
@@ -59,7 +62,7 @@ class UserFeedback < ApplicationRecord
       body += "\n\n---\n\nA negative feedback is a record on your account that you've engaged in negative or rule-breaking behavior. You can appeal this feedback if you think it's unfair by petitioning the mods and admins in the forum. Negative feedback generally doesn't affect your usability of the site, but serious or repeated infractions may lead to a ban."
     end
 
-    Dmail.create_automated(:to_id => user_id, :title => "Your user record has been updated", :body => body)
+    Dmail.create_automated(to_id: user_id, title: "Your user record has been updated", body: body)
   end
 
   def create_mod_action

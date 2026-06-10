@@ -89,12 +89,16 @@ module Danbooru
         authority: parsed_uri.authority,
         path: normalized_path,
         query: Addressable::URI.encode_component(parsed_uri.query, "[[:ascii:]&&[^ ]]"),
-        fragment: parsed_uri.fragment
+        fragment: parsed_uri.fragment,
       )
     end
 
     def initialize
-      @http ||= Danbooru::Http.default
+      @http = Danbooru::Http.default
+    end
+
+    def initialize_dup(old)
+      @http = old.http.dup
     end
 
     def get(url, **options)
@@ -177,8 +181,13 @@ module Danbooru
       end
     end
 
-    def cache(expires_in)
-      use(cache: { expires_in: expires_in })
+    # @param expires_in [Integer] The number of seconds to cache the response for.
+    # @param key [String, Proc] The cache key to use. If a Proc, it will be called with the request as an argument.
+    # @param if [Proc] A condition to check before caching the response. If it returns false, the response won't be
+    #   cached. By default, everything but 5xx responses is cached.
+    # @return [Danbooru::Http] A new HTTP client with caching enabled.
+    def cache(expires_in, key: nil, if: nil)
+      use(cache: { expires_in: expires_in, key: key, if: binding.local_variable_get(:if) })
     end
 
     def proxy(url: Danbooru.config.http_proxy)
@@ -233,12 +242,12 @@ module Danbooru
         response = get(url)
 
         raise DownloadError, "#{url} failed with code #{response.status}" if response.status != 200
-        raise FileTooLargeError, "File size too large (size: #{response.content_length.to_i.to_formatted_s(:human_size)}; max size: #{@max_size.to_formatted_s(:human_size)})" if @max_size && response.content_length.to_i > @max_size
+        raise FileTooLargeError, "File size too large (size: #{response.content_length.to_i.to_fs(:human_size)}; max size: #{@max_size.to_fs(:human_size)})" if @max_size && response.content_length.to_i > @max_size
 
         size = 0
         response.body.each do |chunk|
           size += chunk.size
-          raise FileTooLargeError, "File size too large (max size: #{@max_size.to_formatted_s(:human_size)})" if @max_size && size > @max_size
+          raise FileTooLargeError, "File size too large (max size: #{@max_size.to_fs(:human_size)})" if @max_size && size > @max_size
           file.write(chunk)
         end
 

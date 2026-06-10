@@ -5,12 +5,17 @@ module Source
   class Extractor
     class Pixiv < Source::Extractor
       def self.enabled?
-        Danbooru.config.pixiv_phpsessid.present?
+        SiteCredential.for_site("Pixiv").present?
       end
 
       def image_urls
-        if is_ugoira?
-          [api_ugoira[:originalSrc]]
+        # For ugoira we have to fetch the frame metadata from the API, which may be incorrect for revisions.
+        # Therefore, check that the date in the URL matches the date of the latest revision URL from the API.
+        #
+        # https://i.pximg.net/img-zip-ugoira/img/2024/10/17/12/31/43/123406986_ugoira1920x1080.zip
+        # https://i.pximg.net/img-zip-ugoira/img/2024/10/22/02/32/43/123406986_ugoira1920x1080.zip
+        if parsed_url.ugoira_zip_url? && parsed_url.date != ugoira_zip_url.date
+          [] # Return nothing because the ugoira has been revised, so we can't be sure we have the correct frame delays.
         # If it's a full image URL, then use it as-is instead of looking it up in the API, because it could be the
         # original version of an image that has since been revised.
         elsif parsed_url.full_image_url.present?
@@ -30,7 +35,9 @@ module Source
       end
 
       def original_urls
-        if api_pages.present?
+        if ugoira_zip_url.present?
+          [ugoira_zip_url.to_s]
+        elsif api_pages.present?
           api_pages.pluck("urls").pluck("original").to_a
         elsif api_novel.present?
           cover_url = Source::URL.parse(api_novel[:coverUrl]).candidate_full_image_urls.find { |url| http_exists?(url) } || api_novel[:coverUrl]
@@ -70,6 +77,35 @@ module Source
 
       def other_names
         [display_name, (username unless username&.starts_with?("user_"))].compact_blank.uniq(&:downcase)
+      end
+
+      def api_created_date
+        Time.iso8601(api_response["createDate"]).utc if api_response["createDate"]
+      end
+
+      def api_updated_date
+        if api_novel_series.present?
+          date_string = api_response["updateDate"]
+        else
+          date_string = api_response["uploadDate"]
+        end
+        Time.iso8601(date_string).utc if date_string
+      end
+
+      def published_at
+        if parsed_url.image_url?
+          parsed_url.parsed_date
+        else
+          api_created_date
+        end
+      end
+
+      def updated_at
+        if parsed_url.image_url?
+          nil
+        else
+          api_updated_date
+        end
       end
 
       def artist_commentary_title
@@ -145,14 +181,56 @@ module Source
         tags
       end
 
-      def normalize_tag(tag)
-        tag.gsub(/\d+users入り\z/i, "")
+      def download_file!(url)
+        url = Source::URL.parse(url)
+
+        if url.ugoira_zip_url? && url.params.key?(:original)
+          ugoira_file
+        else
+          super(url.to_s)
+        end
       end
 
-      def download_file!(url)
-        media_file = super(url)
-        media_file.frame_delays = ugoira_frame_delays if is_ugoira?
-        media_file
+      # @return [Source::URL, nil] The URL to the current ugoira zip file, or nil if this is not a ugoira.
+      memoize def ugoira_zip_url
+        frame_url = api_pages.pluck("urls")&.pick("original")
+        zip_url = Source::URL.parse(frame_url)&.ugoira_zip_url
+
+        Source::URL.parse(zip_url)
+      end
+
+      # @return [Array<String>] The list of URLs to the individual frames in the original ugoira.
+      memoize def ugoira_frame_urls
+        base_frame_url = api_pages.pluck("urls")&.pick("original")&.then { |url| Source::URL.parse(url) }
+
+        ugoira_frame_delays.size.times.map do |n|
+          base_frame_url.ugoira_frame_url(n)
+        end
+      end
+
+      # @return [Array<MediaFile>] The list of individual frames in the original ugoira.
+      memoize def ugoira_frames
+        ugoira_frame_urls.parallel_map do |url|
+          # XXX dup the downloader to avoid sharing it across threads because the underlying HTTP.rb library isn't thread-safe.
+          _, file = http_downloader.dup.download_media(url)
+          file
+        end
+      end
+
+      # @return [MediaFile, nil] The original ugoira built from the individual frames.
+      memoize def ugoira_file
+        return unless ugoira_frames.present? && ugoira_frame_delays.present?
+
+        # Use the date from the URL for timestamps in the zipfile because it includes the seconds and the uploadDate
+        # from the API doesn't, and because it's what gallery-dl does.
+        mtime = Source::URL.parse(ugoira_frame_urls.first).parsed_date
+
+        MediaFile::Ugoira.create(ugoira_frames, frame_delays: ugoira_frame_delays, mtime: mtime, data: {
+          illustId: api_response[:illustId].to_i,
+          userId: api_response[:userId].to_i,
+          createDate: api_response[:createDate], # when the ugoira was first uploaded
+          uploadDate: api_response[:uploadDate], # when the ugoira was last revised (same as the creation date if not revised)
+        })
       end
 
       def translate_tag(tag)
@@ -170,7 +248,7 @@ module Source
       end
 
       def is_ugoira?
-        original_urls.any? { |url| Source::URL.parse(url).is_ugoira? }
+        parsed_url.is_ugoira? || original_urls.any? { |url| Source::URL.parse(url).is_ugoira? }
       end
 
       memoize def illust_id
@@ -186,28 +264,28 @@ module Source
       end
 
       def http
-        super.cookies(PHPSESSID: Danbooru.config.pixiv_phpsessid)
+        super.cookies(PHPSESSID: credentials[:phpsessid])
       end
 
       memoize def api_illust
         return {} unless illust_id.present?
 
         # curl "https://www.pixiv.net/ajax/illust/87598468" | jq
-        http.cache(1.minute).parsed_get("https://www.pixiv.net/ajax/illust/#{illust_id}")&.dig("body") || {}
+        parsed_get("https://www.pixiv.net/ajax/illust/#{illust_id}")&.dig("body") || {}
       end
 
       memoize def api_pages
         return {} unless illust_id.present?
 
         # curl "https://www.pixiv.net/ajax/illust/87598468/pages" | jq
-        http.cache(1.minute).parsed_get("https://www.pixiv.net/ajax/illust/#{illust_id}/pages")&.dig("body") || {}
+        parsed_get("https://www.pixiv.net/ajax/illust/#{illust_id}/pages")&.dig("body") || {}
       end
 
       memoize def api_ugoira
         return {} unless illust_id.present?
 
         # curl "https://www.pixiv.net/ajax/illust/74932152/ugoira_meta" | jq
-        http.cache(1.minute).parsed_get("https://www.pixiv.net/ajax/illust/#{illust_id}/ugoira_meta")&.dig("body") || {}
+        parsed_get("https://www.pixiv.net/ajax/illust/#{illust_id}/ugoira_meta")&.dig("body") || {}
       end
 
       memoize def api_novel
@@ -215,7 +293,7 @@ module Source
 
         # curl "https://www.pixiv.net/ajax/novel/74932152" | jq
         # curl "https://www.pixiv.net/ajax/user/66091066/novels/tags" | jq
-        http.cache(1.minute).parsed_get("https://www.pixiv.net/ajax/novel/#{novel_id}")&.dig("body") || {}
+        parsed_get("https://www.pixiv.net/ajax/novel/#{novel_id}")&.dig("body") || {}
       end
 
       memoize def api_novel_series
@@ -223,7 +301,7 @@ module Source
 
         # curl "https://www.pixiv.net/ajax/novel/series/9593812" | jq
         # curl "https://www.pixiv.net/ajax/novel/series_content/9593812" | jq
-        http.cache(1.minute).parsed_get("https://www.pixiv.net/ajax/novel/series/#{novel_series_id}")&.dig("body") || {}
+        parsed_get("https://www.pixiv.net/ajax/novel/series/#{novel_series_id}")&.dig("body") || {}
       end
 
       memoize def api_response
@@ -231,7 +309,7 @@ module Source
       end
 
       def ugoira_frame_delays
-        api_ugoira[:frames].pluck("delay")
+        api_ugoira[:frames].to_a.pluck("delay")
       end
     end
   end

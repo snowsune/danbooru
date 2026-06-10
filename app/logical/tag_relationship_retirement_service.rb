@@ -18,12 +18,12 @@ module TagRelationshipRetirementService
 
   def forum_topic
     topic = ForumTopic.where(title: FORUM_TOPIC_TITLE).first
+
     if topic.nil?
-      CurrentUser.scoped(User.system) do
-        topic = ForumTopic.create!(creator: User.system, title: FORUM_TOPIC_TITLE, category_id: 1)
-        ForumPost.create!(creator: User.system, body: FORUM_TOPIC_BODY, topic: topic)
-      end
+      topic = ForumTopic.create!(creator: User.system, title: FORUM_TOPIC_TITLE, category: "Tags")
+      ForumPost.create!(creator: User.system, body: FORUM_TOPIC_BODY, topic: topic)
     end
+
     topic
   end
 
@@ -44,13 +44,13 @@ module TagRelationshipRetirementService
   end
 
   def inactive_implications
-    TagImplication.active.empty.where.not(consequent_name: "banned_artist")
+    TagImplication.active.empty
   end
 
   def inactive_gentag_aliases
-    aliases = TagAlias.general.active.where("tag_aliases.created_at < ?", THRESHOLD.ago)
-    aliases = aliases.select do |tag_alias|
-      !tag_alias.consequent_tag.posts.exists?(["created_at > ?", THRESHOLD.ago])
+    aliases = TagAlias.general.active.where(created_at: ...THRESHOLD.ago)
+    aliases = aliases.reject do |tag_alias|
+      tag_alias.consequent_tag.posts.exists?(["created_at > ?", THRESHOLD.ago])
     end
 
     aliases += TagAlias.active.empty
@@ -58,6 +58,6 @@ module TagRelationshipRetirementService
   end
 
   def inactive_artist_aliases
-    TagAlias.active.artist.where("tag_aliases.created_at < ?", THRESHOLD.ago)
+    TagAlias.active.artist.where(created_at: ...THRESHOLD.ago)
   end
 end

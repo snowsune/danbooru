@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 # @see https://picdig.net/
-# @see Source::Extractor::Picdig
 class Source::URL::Picdig < Source::URL
+  site "Picdig", url: "https://picdig.net"
+
   RESERVED_NAMES = %w[api articles images my privacy-policy projects terms]
 
   attr_reader :username, :account_id, :user_id, :project_id, :image_id

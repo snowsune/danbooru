@@ -1,14 +1,12 @@
 # frozen_string_literal: true
 
 class Source::URL::Fc2 < Source::URL
+  site "FC2", url: "https://fc2.com", domains: %w[fc2.com fc2web.com fc2blog.net fc2blog.us]
+
   attr_reader :username, :subsite, :blog_entry, :album_filename, :candidate_full_image_url, :candidate_page_urls
 
   def self.match?(url)
     url.domain.in?(%w[fc2.com fc2web.com fc2blog.net fc2blog.us])
-  end
-
-  def site_name
-    "FC2"
   end
 
   def parse
@@ -173,10 +171,11 @@ class Source::URL::Fc2 < Source::URL
     # http://xkilikox.fc2web.com
     # http://yappaga.fc2web.com/gallery.html (404: http://yappaga.fc2web.com)
     # http://naokimk2.fc2web.com/HP2/TOP.html (404: http://naokimk2.fc2web.com)
+    # http://oss4224.web.fc2.com/こ
     #
     # http://xkilikox.fc2web.com/image/haguruma.html (XXX: should be page url, not a profile url)
     elsif (subsite.in?(%w[bbs web h x]) || domain == "fc2web.com") && !image_url?
-      URI.join("http://#{host}", path).to_s.chomp("/")
+      Addressable::URI.join("http://#{host}", path).to_s.chomp("/")
 
     # http://rxsdm.h.fc2.com/f/061201_2.jpg
     # http://xkilikox.fc2web.com/image/haguruma00.jpg

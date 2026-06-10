@@ -1,5 +1,4 @@
 <% page_title "Favgroup: #{@favorite_group.pretty_name}" %>
-<%= render_meta_links @posts %>
 <%= render "secondary_links" %>
 
 <div id="c-favorite-groups">
@@ -13,7 +12,7 @@
     <br>
     <br>
 
-    <%= render "posts/partials/common/inline_blacklist" %>
+    <%= render BlacklistComponent.new(user: CurrentUser.user, inline: true) %>
 
     <%= render_post_gallery(@posts, tags: "favgroup:#{@favorite_group.id}", show_deleted: true) do |gallery| %>
       <% gallery.with_footer do %>

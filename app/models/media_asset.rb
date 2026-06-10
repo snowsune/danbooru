@@ -4,6 +4,7 @@ class MediaAsset < ApplicationRecord
   class Error < StandardError; end
 
   FILE_TYPES = %w[jpg png gif webp avif mp4 webm swf zip]
+  FILE_MIME_TYPES = %w[image/jpeg image/png image/gif image/webp image/avif video/mp4 video/webm application/x-shockwave-flash video/x-ugoira]
   FILE_KEY_LENGTH = 9
   VARIANTS = %i[180x180 360x360 720x720 sample full original]
   MAX_FILE_SIZE = Danbooru.config.max_file_size.to_i
@@ -32,7 +33,6 @@ class MediaAsset < ApplicationRecord
   has_many :uploads, through: :upload_media_assets
   has_many :uploaders, through: :uploads, class_name: "User", foreign_key: :uploader_id
   has_many :ai_tags
-  has_many :pending_moderation_reports, -> { pending }, as: :model, class_name: "ModerationReport"
   has_many :dtext_links, -> { embedded_media_asset }, foreign_key: :link_target
   has_many :embedding_wiki_pages, through: :dtext_links, source: :model, source_type: "WikiPage"
 
@@ -51,7 +51,7 @@ class MediaAsset < ApplicationRecord
   # Expunged: The asset's files have been permanently deleted.
   # Failed: The asset failed to upload. The asset may be in a partially uploaded state, with some
   #         files missing or incompletely transferred.
-  enum status: {
+  enum :status, {
     processing: 100,
     active: 200,
     deleted: 300,
@@ -59,7 +59,7 @@ class MediaAsset < ApplicationRecord
     failed: 500,
   }
 
-  validates :md5, uniqueness: { conditions: -> { where(status: [:processing, :active]) } }, if: :md5_changed?
+  validates :md5, uniqueness: { conditions: -> { where(status: [:processing, :active]) }}, if: :md5_changed?
   validates :file_ext, inclusion: { in: FILE_TYPES, message: "File is not an image or video" }
   validates :file_key, length: { is: FILE_KEY_LENGTH }, uniqueness: true, if: :file_key_changed?
   validates :file_size, comparison: { greater_than: 0 }, if: :file_size_changed?
@@ -78,6 +78,7 @@ class MediaAsset < ApplicationRecord
     include ActiveModel::Serializers::Xml
 
     attr_reader :media_asset, :type
+
     delegate :id, :md5, :file_key, :storage_service, :backup_storage_service, to: :media_asset
 
     def initialize(media_asset, type)
@@ -105,7 +106,7 @@ class MediaAsset < ApplicationRecord
 
     def open_file(&block)
       open_file!(&block)
-    rescue
+    rescue StandardError
       nil
     end
 
@@ -205,7 +206,7 @@ class MediaAsset < ApplicationRecord
       [media_asset, type].hash
     end
 
-    def serializable_hash(*options)
+    def serializable_hash(*_options)
       { type: type, url: file_url, width: width, height: height, file_ext: file_ext }
     end
 
@@ -232,7 +233,7 @@ class MediaAsset < ApplicationRecord
       def exif_matches(string)
         # string = File:ColorComponents=3
         if string.include?("=")
-          key, value = string.split(/=/, 2)
+          key, value = string.split("=", 2)
           hash = { key => value }
           joins(:media_metadata).where_json_contains("media_metadata.metadata", hash)
         # string = File:ColorComponents
@@ -242,7 +243,7 @@ class MediaAsset < ApplicationRecord
       end
 
       def search(params, current_user)
-        q = search_attributes(params, [:id, :created_at, :updated_at, :status, :md5, :pixel_hash, :file_ext, :file_size, :image_width, :image_height, :duration, :file_key, :is_public], current_user: current_user)
+        q = search_attributes(params, %i[id created_at updated_at status md5 pixel_hash file_ext file_size image_width image_height duration file_key is_public], current_user: current_user)
 
         if params[:metadata].present?
           q = q.joins(:media_metadata).merge(MediaMetadata.search({ metadata: params[:metadata] }, current_user))
@@ -254,10 +255,10 @@ class MediaAsset < ApplicationRecord
         end
 
         if params[:is_posted].to_s.truthy?
-          #q = q.where.associated(:post)
+          # q = q.where.associated(:post)
           q = q.where(Post.where("posts.md5 = media_assets.md5").arel.exists)
         elsif params[:is_posted].to_s.falsy?
-          #q = q.where.missing(:post)
+          # q = q.where.missing(:post)
           q = q.where.not(Post.where("posts.md5 = media_assets.md5").arel.exists)
         end
 
@@ -289,7 +290,7 @@ class MediaAsset < ApplicationRecord
       #
       # This can't be called inside a transaction because the transaction will
       # fail if there's a RecordNotUnique error when the asset already exists.
-      def upload!(media_file, &block)
+      def upload!(media_file, &_block)
         media_file = MediaFile.open(media_file) unless media_file.is_a?(MediaFile)
 
         media_asset = create!(file: media_file, status: :processing)
@@ -326,7 +327,7 @@ class MediaAsset < ApplicationRecord
         # failed state, then mark the asset as failed so the user can try the upload again later.
         if !media_asset.active?
           media_asset.update!(status: :failed)
-          raise Error, "Upload failed, try again (timed out while waiting for file to be processed)"
+          raise Error, "Timed out while waiting for file to be processed"
         end
 
         media_asset
@@ -338,14 +339,14 @@ class MediaAsset < ApplicationRecord
       end
 
       def validate_media_file!(media_file, uploader)
-        if !media_file.file_ext.to_s.in?(FILE_TYPES)
+        if !media_file.mime_type.to_s.in?(FILE_MIME_TYPES)
           raise Error, "File is not an image or video"
         elsif !media_file.is_supported?
           raise Error, "File type is not supported"
         elsif media_file.is_corrupt?
           raise Error, "File is corrupt"
         elsif media_file.file_size > MAX_FILE_SIZE
-          raise Error, "File size too large (size: #{media_file.file_size.to_formatted_s(:human_size)}; max size: #{MAX_FILE_SIZE.to_formatted_s(:human_size)})"
+          raise Error, "File size too large (size: #{media_file.file_size.to_fs(:human_size)}; max size: #{MAX_FILE_SIZE.to_fs(:human_size)})"
         elsif media_file.resolution > MAX_IMAGE_RESOLUTION
           raise Error, "Image resolution is too large (resolution: #{(media_file.resolution / 1_000_000.0).round(1)} megapixels (#{media_file.width}x#{media_file.height}); max: #{MAX_IMAGE_RESOLUTION / 1_000_000} megapixels)"
         elsif media_file.width > MAX_IMAGE_WIDTH
@@ -408,7 +409,7 @@ class MediaAsset < ApplicationRecord
     def regenerate_files!(original_file)
       distribute_files!(original_file, variants: variants.without(original))
       purge_cached_urls!
-      post.update_iqdb if post.present?
+      post&.update_iqdb
     end
 
     # Purge all image URLs from Cloudflare.
@@ -440,9 +441,8 @@ class MediaAsset < ApplicationRecord
         purge_cached_urls!
         update!(status: :expunged)
         ModAction.log("expunged media asset ##{id} (md5=#{md5})", :media_asset_expunge, subject: self, user: current_user) if log
-        pending_moderation_reports.update!(status: :handled, updater: current_user)
       end
-    rescue
+    rescue StandardError
       update!(status: :failed)
       raise
     end
@@ -453,9 +453,8 @@ class MediaAsset < ApplicationRecord
         purge_cached_urls!
         update!(status: :deleted)
         ModAction.log("deleted media asset ##{id} (md5=#{md5})", :media_asset_delete, subject: self, user: current_user) if log
-        pending_moderation_reports.update!(status: :handled, updater: current_user)
       end
-    rescue
+    rescue StandardError
       update!(status: :failed)
       raise
     end
@@ -560,7 +559,7 @@ class MediaAsset < ApplicationRecord
 
     # @return [Array<String, Integer>] The highest confidence AI rating, along with its score.
     def ai_rating
-      ai_ratings.max_by(&:second)
+      ai_ratings.max_by(&:second) || [Post::RATINGS.keys.first, 0]
     end
 
     # g => 0, s => 1, q => 2, e => 3
@@ -570,6 +569,15 @@ class MediaAsset < ApplicationRecord
 
     def pretty_ai_rating
       Post::RATINGS.fetch(ai_rating.first)
+    end
+
+    def is_ai_nsfw?
+      ai_rating.first.in?(%w[q e])
+    end
+
+    # @param tags [String] The AI tag query.
+    def ai_tags_match?(tags)
+      MediaAsset.where(id: id).ai_tags_match(tags).exists?
     end
   end
 

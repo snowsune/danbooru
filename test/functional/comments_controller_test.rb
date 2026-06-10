@@ -1,23 +1,17 @@
-require 'test_helper'
+require "test_helper"
 
 class CommentsControllerTest < ActionDispatch::IntegrationTest
   context "A comments controller" do
     setup do
-      @mod = FactoryBot.create(:moderator_user)
-      @user = FactoryBot.create(:member_user, name: "cirno")
-      @post = create(:post, id: 100)
-
-      CurrentUser.user = @user
-    end
-
-    teardown do
-      CurrentUser.user = nil
+      @mod = create(:moderator_user)
+      @user = create(:member_user)
+      @post = create(:post)
     end
 
     context "index action" do
       context "grouped by post" do
         should "render all comments for .js" do
-          @comment = as(@user) { create(:comment, post: @post) }
+          @comment = create(:comment, post: @post)
           get comments_path(post_id: @post.id), xhr: true
 
           assert_response :success
@@ -25,17 +19,19 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
         end
 
         should "show posts with visible comments" do
-          @comment = as(@user) { create(:comment, post: @post) }
+          @comment = create(:comment, post: @post)
           get comments_path(group_by: "post")
 
           assert_response :success
           assert_select "div#post_#{@post.id}", 1
           assert_select "div#post_#{@post.id} .comment", 1
           assert_select "div#post_#{@post.id} .show-all-comments-link", 0
+
+          assert_select ".new-comment a", count: 1, text: "Leave a comment"
         end
 
         should "not bump posts with nonbumping comments" do
-          as(@user) { create(:comment, post: @post, do_not_bump_post: true) }
+          create(:comment, post: @post, do_not_bump_post: true)
           get comments_path(group_by: "post")
 
           assert_response :success
@@ -43,7 +39,7 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
         end
 
         should "not bump posts with only deleted comments" do
-          as(@user) { create(:comment, post: @post, is_deleted: true) }
+          create(:comment, post: @post, is_deleted: true)
           get comments_path(group_by: "post")
 
           assert_response :success
@@ -64,69 +60,70 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
         setup do
           @user_comment = create(:comment, created_at: 10.minutes.ago, updated_at: 3.minutes.ago, post: @post, score: 10, do_not_bump_post: true, creator: @user)
           @mod_comment = create(:comment, post: build(:post, tag_string: "touhou"), body: "blah", is_sticky: true, creator: @mod)
-          @deleted_comment = create(:comment, creator: create(:user, name: "deleted"), is_deleted: true, is_sticky: true, do_not_bump_post: true, score: 10, body: "blah")
+          @deleted_comment = create(:comment, creator: create(:user), is_deleted: true, is_sticky: true, do_not_bump_post: true, score: 10, body: "blah")
         end
 
         context "as a regular user" do
-          setup { CurrentUser.user = @user }
+          comments = respond_to_search.as_user { @user }
 
-          should respond_to_search(other_params: {group_by: "comment"}).with { [@deleted_comment, @mod_comment, @user_comment] }
-          should respond_to_search(body_matches: "blah").with { @mod_comment }
-          should respond_to_search(score: 10).with { @user_comment }
-          should respond_to_search(is_sticky: "true").with { @mod_comment }
-          should respond_to_search(is_deleted: "true").with { @deleted_comment }
-          should respond_to_search(do_not_bump_post: "true").with { @user_comment }
-          should respond_to_search(is_edited: "true").with { @user_comment }
-          should respond_to_search(is_edited: "false").with { [@deleted_comment, @mod_comment] }
-          should respond_to_search(creator_name: "deleted").with { [] }
+          should comments.with_params(group_by: "comment").with { [@deleted_comment, @mod_comment, @user_comment] }
+          should comments.search_params(body_matches: "blah").with { @mod_comment }
+          should comments.search_params(score: 10).with { @user_comment }
+          should comments.search_params(is_sticky: "true").with { @mod_comment }
+          should comments.search_params(is_deleted: "true").with { @deleted_comment }
+          should comments.search_params(do_not_bump_post: "true").with { @user_comment }
+          should comments.search_params(is_edited: "true").with { @user_comment }
+          should comments.search_params(is_edited: "false").with { [@deleted_comment, @mod_comment] }
+          should comments.search_params(creator_name: -> { @deleted_comment.creator.name }).with { [] }
         end
 
         context "as the creator of a deleted comment" do
-          setup { CurrentUser.user = @deleted_comment.creator }
+          comments = respond_to_search.as_user { @deleted_comment.creator }
 
-          should respond_to_search(other_params: {group_by: "comment"}).with { [@deleted_comment, @mod_comment, @user_comment] }
-          should respond_to_search(body_matches: "blah").with { @mod_comment }
-          should respond_to_search(score: 10).with { @user_comment }
-          should respond_to_search(is_sticky: "true").with { @mod_comment }
-          should respond_to_search(is_deleted: "true").with { @deleted_comment }
-          should respond_to_search(do_not_bump_post: "true").with { @user_comment }
-          should respond_to_search(is_edited: "true").with { @user_comment }
-          should respond_to_search(is_edited: "false").with { [@deleted_comment, @mod_comment] }
-          should respond_to_search(creator_name: "deleted").with { @deleted_comment }
+          should comments.with_params(group_by: "comment").with { [@deleted_comment, @mod_comment, @user_comment] }
+          should comments.search_params(body_matches: "blah").with { @mod_comment }
+          should comments.search_params(score: 10).with { @user_comment }
+          should comments.search_params(is_sticky: "true").with { @mod_comment }
+          should comments.search_params(is_deleted: "true").with { @deleted_comment }
+          should comments.search_params(do_not_bump_post: "true").with { @user_comment }
+          should comments.search_params(is_edited: "true").with { @user_comment }
+          should comments.search_params(is_edited: "false").with { [@deleted_comment, @mod_comment] }
+          should comments.search_params(creator_name: -> { @deleted_comment.creator.name }).with { @deleted_comment }
         end
 
         context "as a moderator" do
-          setup { CurrentUser.user = @mod }
+          comments = respond_to_search.as_user { @mod }
 
-          should respond_to_search(other_params: {group_by: "comment"}).with { [@deleted_comment, @mod_comment, @user_comment] }
-          should respond_to_search(body_matches: "blah").with { [@deleted_comment, @mod_comment] }
-          should respond_to_search(score: 10).with { [@deleted_comment, @user_comment] }
-          should respond_to_search(is_sticky: "true").with { [@deleted_comment, @mod_comment] }
-          should respond_to_search(is_deleted: "true").with { @deleted_comment }
-          should respond_to_search(do_not_bump_post: "true").with { [@deleted_comment, @user_comment] }
-          should respond_to_search(is_edited: "true").with { @user_comment }
-          should respond_to_search(is_edited: "false").with { [@deleted_comment, @mod_comment] }
-          should respond_to_search(creator_name: "deleted").with { @deleted_comment }
+          should comments.with_params(group_by: "comment").with { [@deleted_comment, @mod_comment, @user_comment] }
+          should comments.search_params(body_matches: "blah").with { [@deleted_comment, @mod_comment] }
+          should comments.search_params(score: 10).with { [@deleted_comment, @user_comment] }
+          should comments.search_params(is_sticky: "true").with { [@deleted_comment, @mod_comment] }
+          should comments.search_params(is_deleted: "true").with { @deleted_comment }
+          should comments.search_params(do_not_bump_post: "true").with { [@deleted_comment, @user_comment] }
+          should comments.search_params(is_edited: "true").with { @user_comment }
+          should comments.search_params(is_edited: "false").with { [@deleted_comment, @mod_comment] }
+          should comments.search_params(creator_name: -> { @deleted_comment.creator.name }).with { @deleted_comment }
         end
 
         context "using includes" do
-          should respond_to_search(post_id: 100).with { @user_comment }
+          should respond_to_search(post_id: -> { @post.id }).with { @user_comment }
           should respond_to_search(post_tags_match: "touhou").with { @mod_comment }
-          should respond_to_search(creator_name: "cirno").with { @user_comment }
-          should respond_to_search(creator: {level: User::Levels::MODERATOR}).with { @mod_comment }
+          should respond_to_search(creator_name: -> { @user.name }).with { @user_comment }
+          should respond_to_search(creator: { level: User::Levels::MODERATOR }).with { @mod_comment }
         end
       end
 
       context "for atom feeds" do
         should "render" do
-          @comment = as(@user) { create(:comment, post: @post) }
+          @comment = create(:comment, post: @post)
           get comments_path(format: "atom")
+
           assert_response :success
         end
 
         should "not show comments on restricted posts" do
           @post.update!(is_banned: true)
-          @comment = as(@user) { create(:comment, post: @post) }
+          @comment = create(:comment, post: @post)
 
           get comments_path(format: "atom")
           assert_response :success
@@ -164,10 +161,25 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
     end
 
     context "edit action" do
-      should "render" do
-        @comment = create(:comment, post: @post)
-        get_auth edit_comment_path(@comment.id), @user
+      should "render for the creator" do
+        @comment = create(:comment)
+        get_auth edit_comment_path(@comment.id), @comment.creator
+
         assert_response :success
+      end
+
+      should "render for a moderator" do
+        @comment = create(:comment)
+        get_auth edit_comment_path(@comment.id), @mod
+
+        assert_response :success
+      end
+
+      should "not render for anyone else" do
+        @comment = create(:comment)
+        get_auth edit_comment_path(@comment.id), create(:user)
+
+        assert_response 403
       end
     end
 
@@ -178,36 +190,48 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
 
       context "when updating another user's comment" do
         should "succeed if updater is a moderator" do
-          put_auth comment_path(@comment.id), @mod, params: {comment: {body: "abc"}}, xhr: true
+          put_auth comment_path(@comment.id), @mod, params: { comment: { body: "abc" }}, xhr: true
 
+          assert_response :success
           assert_equal("abc", @comment.reload.body)
           assert_match(/updated comment ##{@comment.id}/, ModAction.last.description)
           assert_equal(@comment, ModAction.last.subject)
           assert_equal(@mod, ModAction.last.creator)
-          assert_response :success
+          assert_equal(@mod, @comment.updater)
         end
 
         should "fail if updater is not a moderator" do
-          @mod_comment = as(@mod) { create(:comment, post: @post) }
-          put_auth comment_path(@mod_comment.id), @user, params: {comment: {body: "abc"}}, xhr: true
-          assert_not_equal("abc", @mod_comment.reload.body)
+          @comment = create(:comment)
+          put_auth comment_path(@comment.id), @user, params: { comment: { body: "abc" }}, xhr: true
+
           assert_response 403
+          assert_not_equal("abc", @comment.reload.body)
+        end
+
+        should "fail if the updater is not the comment creator" do
+          @comment = create(:comment, creator: create(:user), updater: @user)
+          put_auth comment_path(@comment.id), @user, params: { comment: { body: "abc" }}, xhr: true
+
+          assert_response 403
+          assert_not_equal("abc", @comment.reload.body)
         end
       end
 
       context "when stickying a comment" do
         should "succeed if updater is a moderator" do
-          put_auth comment_path(@comment.id), @mod, params: {comment: {is_sticky: true}}, xhr: true
+          put_auth comment_path(@comment.id), @mod, params: { comment: { is_sticky: true }}, xhr: true
 
+          assert_response :success
           assert_equal(true, @comment.reload.is_sticky)
           assert_match(/updated comment ##{@comment.id}/, ModAction.last.description)
           assert_equal(@comment, ModAction.last.subject)
           assert_equal(@mod, ModAction.last.creator)
-          assert_response :success
+          assert_equal(@mod, @comment.updater)
         end
 
         should "fail if updater is not a moderator" do
-          put_auth comment_path(@comment.id), @user, params: {comment: {is_sticky: true}}, xhr: true
+          put_auth comment_path(@comment.id), @comment.creator, params: { comment: { is_sticky: true }}, xhr: true
+
           assert_response 403
           assert_equal(false, @comment.reload.is_sticky)
         end
@@ -216,7 +240,7 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
       context "for a deleted comment" do
         should "not allow the creator to edit the comment" do
           @comment.update!(is_deleted: true)
-          put_auth comment_path(@comment.id), @user, params: { comment: { body: "blah" }}, xhr: true
+          put_auth comment_path(@comment.id), @comment.creator, params: { comment: { body: "blah" }}, xhr: true
 
           assert_response 403
           assert_not_equal("blah", @comment.reload.body)
@@ -224,34 +248,30 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
       end
 
       should "update the body" do
-        put_auth comment_path(@comment.id), @user, params: {comment: {body: "abc"}}, xhr: true
+        put_auth comment_path(@comment.id), @comment.creator, params: { comment: { body: "abc" }}, xhr: true
 
-        assert_equal("abc", @comment.reload.body)
-        assert_match(/updated comment ##{@comment.id}/, ModAction.last.description)
-        assert_equal(@comment, ModAction.last.subject)
-        assert_equal(@user, ModAction.last.creator)
         assert_response :success
+        assert_equal("abc", @comment.reload.body)
+        assert_equal(0, ModAction.count)
       end
 
-      should "allow changing the body and is_deleted" do
-        put_auth comment_path(@comment.id), @user, params: {comment: {body: "herp derp", is_deleted: true}}, xhr: true
+      should "allow changing the body and and deleting the comment at the same time" do
+        put_auth comment_path(@comment.id), @comment.creator, params: { comment: { body: "herp derp", is_deleted: true }}, xhr: true
 
+        assert_response :success
         assert_equal("herp derp", @comment.reload.body)
         assert_equal(true, @comment.is_deleted)
-        assert_match(/deleted comment ##{@comment.id}/, ModAction.last.description)
-        assert_equal(@comment, ModAction.last.subject)
-        assert_equal(@user, ModAction.last.creator)
-        assert_response :success
+        assert_equal(0, ModAction.count)
       end
 
       should "not allow changing do_not_bump_post or post_id" do
         @another_post = as(@user) { create(:post) }
 
-        put_auth comment_path(@comment.id), @comment.creator, params: { do_not_bump_post: true }
+        put_auth comment_path(@comment.id), @comment.creator, params: { comment: { do_not_bump_post: true }}
         assert_response 403
         assert_equal(false, @comment.reload.do_not_bump_post)
 
-        put_auth comment_path(@comment.id), @comment.creator, params: { post_id: @another_post.id }
+        put_auth comment_path(@comment.id), @comment.creator, params: { comment: { post_id: @another_post.id }}
         assert_response 403
         assert_equal(@post.id, @comment.reload.post_id)
       end
@@ -279,7 +299,7 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
     context "create action" do
       should "create a comment" do
         assert_difference("Comment.count", 1) do
-          post_auth comments_path, @user, params: { comment: { post_id: @post.id, body: "blah" } }
+          post_auth comments_path, @user, params: { comment: { post_id: @post.id, body: "blah" }}
         end
         comment = Comment.last
         assert_redirected_to post_path(comment.post)
@@ -287,22 +307,41 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
 
       should "not allow commenting on nonexistent posts" do
         assert_difference("Comment.count", 0) do
-          post_auth comments_path, @user, params: { comment: { post_id: -1, body: "blah" } }
+          post_auth comments_path, @user, params: { comment: { post_id: -1, body: "blah" }}
         end
         assert_redirected_to comments_path
       end
     end
 
     context "destroy action" do
-      should "mark comment as deleted" do
+      should "allow users to delete their own comments" do
         @comment = create(:comment, post: @post)
-        delete_auth comment_path(@comment.id), @user
+        delete_auth comment_path(@comment.id), @comment.creator
 
-        assert_equal(true, @comment.reload.is_deleted)
         assert_redirected_to @comment
+        assert_equal(true, @comment.reload.is_deleted)
+        assert_equal(@comment.creator, @comment.updater)
+        assert_equal(0, ModAction.count)
+      end
+
+      should "allow moderators to delete comments" do
+        @comment = create(:comment, post: @post)
+        delete_auth comment_path(@comment.id), @mod
+
+        assert_redirected_to @comment
+        assert_equal(true, @comment.reload.is_deleted)
         assert_match(/deleted comment ##{@comment.id}/, ModAction.last.description)
         assert_equal(@comment, ModAction.last.subject)
-        assert_equal(@user, ModAction.last.creator)
+        assert_equal(@mod, ModAction.last.creator)
+        assert_equal(@mod, @comment.updater)
+      end
+
+      should "not allow users to delete other users' comments" do
+        @comment = create(:comment, post: @post)
+        delete_auth comment_path(@comment.id), create(:user)
+
+        assert_response 403
+        assert_equal(false, @comment.reload.is_deleted?)
       end
 
       should "mark all pending moderation reports against the comment as handled" do
@@ -329,12 +368,13 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
         assert_match(/updated comment ##{@comment.id}/, ModAction.last.description)
         assert_equal(@comment, ModAction.last.subject)
         assert_equal(@mod, ModAction.last.creator)
+        assert_equal(@mod, @comment.updater)
       end
 
       should "not allow normal Members to undelete their own comments" do
         @comment = create(:comment, post: @post, is_deleted: true)
+        post_auth undelete_comment_path(@comment.id), @comment.creator
 
-        post_auth undelete_comment_path(@comment.id), @user
         assert_response 403
         assert(@comment.reload.is_deleted?)
       end

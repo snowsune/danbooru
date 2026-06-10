@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-#
+
 # This file contains all the configuration settings for Danbooru.
 #
 # Don't edit this file. Instead, to configure your Danbooru instance, copy this
@@ -175,7 +175,7 @@ module Danbooru
         ENV["RAILS_LOG_LEVEL"]
       elsif debug_mode
         :debug
-      elsif Rails.env.production?
+      elsif !Rails.env.local?
         :error
       elsif Rails.env.development?
         :info
@@ -252,17 +252,17 @@ module Danbooru
 
     # Maximum resolution (width * height) of an upload. Default: 441 megapixels (21000x21000 pixels).
     def max_image_resolution
-      21000 * 21000
+      21_000 * 21_000
     end
 
     # Maximum width of an upload.
     def max_image_width
-      40000
+      40_000
     end
 
     # Maximum height of an upload.
     def max_image_height
-      40000
+      40_000
     end
 
     # Maximum duration of an video in seconds.
@@ -320,14 +320,6 @@ module Danbooru
 
       # You can set `openssl_verify_mode` to `none` to disable verification of the server's SSL certificate if you have a self-signed certificate.
       # "smtps://username:password@example.com?openssl_verify_mode=none"
-    end
-
-    # Deprecated. Use `mail_delivery_url` instead.
-    def mail_delivery_method
-    end
-
-    # Deprecated. Use `mail_delivery_url` instead.
-    def mail_settings
     end
 
     # The path to where uploaded files are stored. You can change this to change where files are
@@ -435,6 +427,12 @@ module Danbooru
       []
     end
 
+    # If a new user uploads a post with any of these AI tags, the post will be blocked.
+    def new_uploader_blocked_ai_tags
+      # "tag1,>50% or tag2,>75% or tag3,>90%"
+      nil
+    end
+
     # If present, the 404 page will show a random post from this pool.
     def page_not_found_pool_id
       nil
@@ -459,9 +457,9 @@ module Danbooru
       nil
     end
 
-    # Your Newgrounds "vmkIdu5l8m" cookie. Login to Newgrounds then use the
-    # devtools to find the "vmkIdu5l8m" cookie.
-    def newgrounds_session_cookie
+    # Your Newgrounds "ng_remember" cookie. Login to Newgrounds then use the
+    # devtools to find the "ng_remember" cookie.
+    def newgrounds_ng_remember_cookie
       nil
     end
 
@@ -485,6 +483,21 @@ module Danbooru
     end
 
     def deviantart_client_secret
+      nil
+    end
+
+    # Your DeviantArt `auth` cookie.
+    def deviantart_auth_cookie
+      nil
+    end
+
+    # Your DeviantArt `auth_secure` cookie.
+    def deviantart_auth_secure_cookie
+      nil
+    end
+
+    # Your DeviantArt `userinfo` cookie.
+    def deviantart_userinfo_cookie
       nil
     end
 
@@ -575,13 +588,6 @@ module Danbooru
     def inkbunny_password
     end
 
-    # Your Bluesky identifier and password. The identifier must include the domain that you see on your profile, ie "username.bsky.social"
-    def bluesky_identifier
-    end
-
-    def bluesky_password
-    end
-
     # Your Postype "PSE3" cookie. Login to Postype then use the devtools to find the "PSE3" cookie.
     # After creating your account, go to https://www.postype.com/account/settings and enable the "Viewing adult content
     # by foreigners" setting to see all content.
@@ -600,8 +606,40 @@ module Danbooru
     def plurk_session_cookie
     end
 
-    # Your Cohost "connect.sid" cookie. Login to Cohost then use the devtools to find the "connect.sid" cookie.
-    def cohost_session_cookie
+    # Your Reddit "reddit_session" cookie
+    def reddit_session_cookie
+    end
+
+    # Your Xiaohongshu site host. Can be either "www.xiaohongshu.com" or "www.rednote.com".
+    def xiaohongshu_api_host
+    end
+
+    # Your Xiaohongshu "gid" cookie. Login to Xiaohongshu then use the devtools to find the "gid" cookie.
+    def xiaohongshu_session_cookie
+    end
+
+    # Your Xiaohongshu "webId" cookie
+    def xiaohongshu_webid_cookie
+    end
+
+    # Your Xiaohongshu "webId" cookie
+    def xiaohongshu_web_session_cookie
+    end
+
+    # Your Huashijie "userId" cookie.
+    def huashijie_user_id
+    end
+
+    # Your Huashijie "token" cookie.
+    def huashijie_session_cookie
+    end
+
+    # Your Gelbooru user ID.
+    def gelbooru_user_id
+    end
+
+    # Your Gelbooru API key. Found at https://gelbooru.com/index.php?page=account&s=options
+    def gelbooru_api_key
     end
 
     # Your Google Blogger API key. Go to https://developers.google.com/blogger/docs/3.0/using#APIKey to create an API key.
@@ -613,19 +651,20 @@ module Danbooru
     # A list of tags that should be removed when a post is replaced. Regexes allowed.
     def post_replacement_tag_removals
       %w[replaceme .*_sample resized upscaled downscaled md5_mismatch
-      jpeg_artifacts corrupted_image missing_image missing_sample missing_thumbnail
-      resolution_mismatch source_larger source_smaller source_request non-web_source]
+         jpeg_artifacts corrupted_image missing_image missing_sample missing_thumbnail
+         resolution_mismatch source_larger source_smaller source_request non-web_source]
     end
 
     # Posts with these tags will be highlighted in the modqueue.
     def modqueue_warning_tags
-      %w[ai-generated ai-assisted anime_screencap bad_source duplicate hard_translated image_sample md5_mismatch
-      nude_filter off-topic paid_reward resized third-party_edit]
+      %w[ai-generated ai-assisted anime_screenshot game_screenshot bad_source duplicate
+         hard-translated image_sample md5_mismatch nude_filter off-topic paid_reward resized
+         third-party_edit]
     end
 
     # Whether the Gold account upgrade page should be enabled.
     def user_upgrades_enabled?
-      true
+      false
     end
 
     # Whether to enable API rate limits.
@@ -645,64 +684,6 @@ module Danbooru
 
     # Whether to enable autocomplete.
     def autocomplete_enabled?
-      true
-    end
-
-    # The URL of the Shopify checkout page where account upgrades are sold.
-    def shopify_checkout_url
-    end
-
-    # The secret used to verify webhooks from Shopify. Get it from the https://xxx.myshopify.com/admin/settings/notifications page.
-    def shopify_webhook_secret
-    end
-
-    def stripe_secret_key
-    end
-
-    def stripe_publishable_key
-    end
-
-    def stripe_webhook_secret
-    end
-
-    def stripe_gold_usd_price_id
-    end
-
-    def stripe_platinum_usd_price_id
-    end
-
-    def stripe_gold_to_platinum_usd_price_id
-    end
-
-    def stripe_gold_eur_price_id
-    end
-
-    def stripe_platinum_eur_price_id
-    end
-
-    def stripe_gold_to_platinum_eur_price_id
-    end
-
-    def stripe_promotion_discount_id
-    end
-
-    # The login ID for Authorize.net. Used for accepting payments for user upgrades.
-    # Signup for a test account at https://developer.authorize.net/hello_world/sandbox.html.
-    def authorize_net_login_id
-    end
-
-    # The transaction key for Authorize.net. This is the API secret for API calls.
-    def authorize_net_transaction_key
-    end
-
-    # The signature key for Authorize.net. Used for verifying webhooks sent by Authorize.net.
-    # Generate at Account > Settings > Security Settings > General Security Settings > API Credentials and Keys
-    def authorize_net_signature_key
-    end
-
-    # Whether to use the test environment or the live environment for Authorize.net. The test environment
-    # allows testing payments without using real credit cards.
-    def authorize_net_test_mode
       true
     end
 
@@ -899,6 +880,19 @@ module Danbooru
 
     def reactions
       {}
+    end
+
+    # A hash of site names to a function taking a tag name and returning a URL for
+    # tag searches on that site. Used to render other names links on wiki pages.
+    def tag_lookup_sites
+      {
+        Pixiv: ->(name) { "https://www.pixiv.net/tags/#{Danbooru::URL.escape(name)}/artworks" },
+        Twitter: ->(name) { "https://x.com/hashtag/#{Danbooru::URL.escape(name)}" },
+        Bluesky: ->(name) { "https://bsky.app/hashtag/#{Danbooru::URL.escape(name)}" },
+        Weibo: ->(name) { "https://s.weibo.com/weibo?q=%23#{Danbooru::URL.escape(name)}%23" },
+        Lofter: ->(name) { "https://www.lofter.com/tag/#{Danbooru::URL.escape(name)}" },
+        Tumblr: ->(name) { "https://www.tumblr.com/tagged/#{Danbooru::URL.escape(name).tr('_', ' ')}" },
+      }
     end
   end
 

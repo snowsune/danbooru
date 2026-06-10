@@ -1,5 +1,5 @@
 import SourceDataComponent from "./source_data_component.js";
-import Utility from './utility';
+import { splitWords } from './utility';
 import Alpine from 'alpinejs';
 
 Alpine.store("relatedTags", {
@@ -125,16 +125,19 @@ RelatedTag.update_selected = function(e) {
 
 RelatedTag.current_tags = function() {
   let tagString = $("#post_tag_string").val().toLowerCase();
-  return Utility.splitWords(tagString);
+  return splitWords(tagString);
 }
 
 RelatedTag.toggle_tag = function(e) {
+  if (e.type === "click" && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+    return;
+  }
+
   var $field = $("#post_tag_string");
   var tag = $(e.target).closest("li").find("a").attr("data-tag-name");
 
   if (RelatedTag.current_tags().includes(tag)) {
-    var escaped_tag = Utility.regexp_escape(tag);
-    $field.val($field.val().replace(new RegExp("(?<=^|\\s)" + escaped_tag + "(?=$|\\s)", "gi"), ""));
+    $field.val($field.val().replace(new RegExp(`(?<=^|\\s)${RegExp.escape(tag)}(?=$|\\s)`, "gi"), ""));
   } else {
     $field.val($field.val() + " " + tag);
   }
@@ -146,8 +149,8 @@ RelatedTag.toggle_tag = function(e) {
   setTimeout(function () { $field.prop('selectionStart', $field.val().length); }, 100);
   e.preventDefault();
 
-  // Artificially trigger input event so the tag counter updates.
-  $field.trigger("input");
+  // Update the tag counter without triggering an input event.
+  $field.trigger("danbooru:update-tag-counter");
 }
 
 RelatedTag.show = function(e) {
@@ -169,4 +172,3 @@ RelatedTag.checkAllTranslatedTags = function() {
 
 
 export default RelatedTag
-

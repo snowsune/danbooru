@@ -3,15 +3,17 @@
 class Dmail < ApplicationRecord
   attr_accessor :creator_ip_addr, :disable_email_notifications
 
-  dtext_attribute :body # defines :dtext_body
+  # defines :dtext_body
+  dtext_attribute :body, media_embeds: { max_embeds: 5, max_large_emojis: 5, max_small_emojis: 100, max_video_size: 1.megabyte, sfw_only: true }
 
-  validate :validate_sender_is_not_limited, on: :create
+  normalizes :title, :body, with: ->(text) { text.to_s.unicode_normalize(:nfc).normalize_whitespace.strip }
+
   validates :title, visible_string: true, length: { maximum: 200 }, if: :title_changed?
   validates :body, visible_string: true, length: { maximum: 50_000 }, if: :body_changed?
 
-  belongs_to :owner, :class_name => "User"
-  belongs_to :to, :class_name => "User"
-  belongs_to :from, :class_name => "User"
+  belongs_to :owner, class_name: "User"
+  belongs_to :to, class_name: "User"
+  belongs_to :from, class_name: "User"
   has_many :moderation_reports, as: :model, dependent: :destroy
 
   before_create :autoreport_spam
@@ -165,14 +167,6 @@ class Dmail < ApplicationRecord
     owner == to
   end
 
-  def validate_sender_is_not_limited
-    return if from.blank? || from.is_gold?
-
-    if from.dmails.where("created_at > ?", 1.hour.ago).group(:to).reorder(nil).count.size >= 10
-      errors.add(:base, "You can't send dmails to more than 10 users per hour")
-    end
-  end
-
   def autoreport_spam
     if is_recipient? && !is_sender? && SpamDetector.new(self, user_ip: creator_ip_addr).spam?
       self.is_deleted = true
@@ -189,7 +183,7 @@ class Dmail < ApplicationRecord
     end
   end
 
-  def dtext_shortlink(key: false, **options)
+  def dtext_shortlink(key: false, **_options)
     key ? "dmail ##{id}/#{self.key}" : "dmail ##{id}"
   end
 

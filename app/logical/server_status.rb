@@ -21,13 +21,17 @@ class ServerStatus
       ip: request.remote_ip,
       headers: http_headers,
       instance: {
+        environment: environment,
+        rails_environment: Rails.env,
         container_name: container_name,
-        instance_name: instance_name,
         worker_name: worker_name,
         container_uptime: container_uptime,
         instance_uptime: instance_uptime,
         worker_uptime: worker_uptime,
         requests_processed: requests_processed,
+      },
+      version: {
+        docker_image_build_date: docker_image_build_date,
         danbooru_version: danbooru_version,
         ruby_version: ruby_version,
         rails_version: rails_version,
@@ -55,17 +59,19 @@ class ServerStatus
       redis: {
         up: redis_up?,
         info: redis_info,
-      }
+      },
     }
   end
 
   concerning :InfoMethods do
+    extend Memoist
+
     def http_headers
       headers = request.headers.env.select { |key| key.starts_with?("HTTP_") }
       headers = headers.transform_keys { |key| key.delete_prefix("HTTP_").tr("_", "-").startcase }
       headers = headers.except("Cookie")
       headers = headers.transform_values { |v| v.encode("UTF-8", invalid: :replace, undef: :replace) }
-      headers = headers.reject { |k, v| v.blank? }
+      headers = headers.compact_blank
       headers
     end
 
@@ -73,24 +79,48 @@ class ServerStatus
       Socket.gethostname
     end
 
-    def instance_name
-      if container_name.present?
-        "#{container_name}/#{node_name}"
+    def kubernetes?
+      ENV["KUBERNETES_SERVICE_HOST"].present?
+    end
+
+    def docker?
+      ENV["DOCKER"] == "true" || File.exist?("/.dockerenv")
+    end
+
+    def environment
+      if kubernetes?
+        "kubernetes"
+      elsif docker?
+        "docker"
       else
-        node_name
+        "bare-metal"
       end
     end
 
-    def container_name
-      ENV["K8S_POD_NAME"]
+    memoize def container_name
+      if kubernetes?
+        ENV["K8S_POD_NAME"]
+      elsif docker?
+        # Do a reverse DNS lookup on the container IP address to get the container name.
+        docker_ip = Socket.ip_address_list.find(&:ipv4_private?)&.ip_address
+        Resolv::DNS.new.getname(docker_ip).to_a[0..-2].map(&:to_s).join(".")
+      end
+    rescue Resolv::ResolvError
+      nil
     end
 
     def node_name
-      ENV["K8S_NODE_NAME"] || hostname
+      if kubernetes?
+        ENV["K8S_NODE_NAME"]
+      elsif docker?
+        nil
+      else
+        hostname
+      end
     end
 
     def worker_name
-      Thread.current.object_id
+      "PID:#{Process.pid} TID:#{Thread.current.object_id}"
     end
 
     def node_uptime
@@ -130,6 +160,10 @@ class ServerStatus
       Rails.application.config.x.git_hash
     end
 
+    def docker_image_build_date
+      Time.zone.parse(ENV["DOCKER_IMAGE_BUILD_DATE"]) if ENV["DOCKER_IMAGE_BUILD_DATE"].present?
+    end
+
     def kernel_version
       File.read("/proc/version").chomp
     end
@@ -157,7 +191,7 @@ class ServerStatus
     def ffmpeg_version
       version = `ffmpeg -version`
       version[/ffmpeg version ([0-9.]+)/, 1]
-    rescue
+    rescue StandardError
       nil
     end
 
@@ -167,7 +201,7 @@ class ServerStatus
 
     def mkvmerge_version
       `mkvmerge --version`.chomp
-    rescue
+    rescue StandardError
       nil
     end
 
@@ -177,7 +211,7 @@ class ServerStatus
 
     def exiftool_version
       `exiftool -ver`.chomp
-    rescue
+    rescue StandardError
       nil
     end
 
@@ -258,7 +292,7 @@ class ServerStatus
 
     def serialize_result(result)
       result.rows.map do |row|
-        row.each_with_index.map do |column_value, i|
+        row.each_with_index.to_h do |column_value, i|
           column_name = result.columns[i]
 
           if result.column_types[column_name]&.type == :interval
@@ -266,7 +300,7 @@ class ServerStatus
           end
 
           [column_name, column_value]
-        end.to_h
+        end
       end
     end
   end

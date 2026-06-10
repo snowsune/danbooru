@@ -3,7 +3,7 @@
 # @see Source::URL::CiEn
 class Source::Extractor::CiEn < Source::Extractor
   def self.enabled?
-    Danbooru.config.ci_en_session_cookie.present?
+    SiteCredential.for_site("Ci-En").present?
   end
 
   def image_urls
@@ -32,15 +32,11 @@ class Source::Extractor::CiEn < Source::Extractor
     end
   end
 
-  def tag_name
-    "cien_#{artist_id}" if artist_id.present?
-  end
-
   def artist_id
     parsed_url.creator_id || parsed_referer&.creator_id
   end
 
-  def artist_name
+  def display_name
     page&.css(".c-accountInfo .e-userName")&.text&.strip
   end
 
@@ -73,14 +69,14 @@ class Source::Extractor::CiEn < Source::Extractor
   end
 
   memoize def page
-    http.cache(1.minute).parsed_get(page_url)
+    parsed_get(page_url)
   end
 
   def http
     # Same cookie works for both all-ages and R18 sites
     super.cookies(
-      ci_en_session: Danbooru.config.ci_en_session_cookie,
-      accepted_rating: "r18g"
+      ci_en_session: credentials[:session_cookie],
+      accepted_rating: "r18g",
     )
   end
 end

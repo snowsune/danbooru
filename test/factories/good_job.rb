@@ -1,11 +1,12 @@
 FactoryBot.define do
-  factory :good_job, class: GoodJob::Job do
+  factory :good_job, class: "GoodJob::Job" do
     transient do
       job { VacuumDatabaseJob.new }
     end
 
     id { SecureRandom.uuid }
     active_job_id { job.job_id }
+    job_class { job.class.name }
     queue_name { job.queue_name }
     priority { job.priority }
     serialized_params do
