@@ -684,6 +684,8 @@ class User < ApplicationRecord
           Float::INFINITY
         elsif level == User::Levels::GOLD
           100
+        elsif level == User::Levels::ANONYMOUS
+          10
         else
           16
         end
