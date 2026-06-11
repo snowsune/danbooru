@@ -60,10 +60,15 @@ EOF
 
   apt-get install --update -y --no-install-recommends ca-certificates
 
-  cat > /etc/apt/apt.conf.d/50snapshot <<EOF
+  # snapshot.ubuntu.com is often down; pass --build-arg UBUNTU_SNAPSHOT= to use normal mirrors.
+  if [ -n "$UBUNTU_SNAPSHOT" ]; then
+    cat > /etc/apt/apt.conf.d/50snapshot <<EOF
     APT::Snapshot "$UBUNTU_SNAPSHOT";
     Acquire::Snapshots::URI::Host::ports.ubuntu.com "https://snapshot.ubuntu.com/ubuntu/@SNAPSHOTID@/";
 EOF
+  else
+    rm -f /etc/apt/apt.conf.d/50snapshot
+  fi
 
   rm -rf /var/lib/apt/lists/*
   apt-get install --update -y --no-install-recommends \
