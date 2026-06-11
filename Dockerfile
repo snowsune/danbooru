@@ -60,7 +60,7 @@ EOF
 
   apt-get install --update -y --no-install-recommends ca-certificates
 
-  # snapshot.ubuntu.com is often down; pass --build-arg UBUNTU_SNAPSHOT= to use normal mirrors.
+  # I had a lot of issues building off of snapshot.ubuntu.com. Manually setting the mirror helped.
   if [ -n "$UBUNTU_SNAPSHOT" ]; then
     cat > /etc/apt/apt.conf.d/50snapshot <<EOF
     APT::Snapshot "$UBUNTU_SNAPSHOT";

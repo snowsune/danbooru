@@ -162,12 +162,27 @@ $(function() {
   RelatedTag.initialize_all();
 });
 
-// Custom click!
-RelatedTag.checkAllTranslatedTags = function() {
+RelatedTag.checkAllTranslatedTags = function(e) {
+  e?.preventDefault();
+
+  var $field = $("#post_tag_string");
+  var current_tags = RelatedTag.current_tags();
+  var new_tags = [];
+
   $(".translated-tags-related-tags-column li").each((_, li) => {
-    $(li).addClass("selected");
-    $(li).find("input[type='checkbox']").prop("checked", true);
+    let tag = $(li).find("a").attr("data-tag-name");
+    if (tag && !current_tags.includes(tag)) {
+      new_tags.push(tag);
+    }
   });
+
+  if (new_tags.length > 0) {
+    $field.val(($field.val() + " " + new_tags.join(" ")).trim().replace(/ +/g, " ") + " ");
+  }
+
+  RelatedTag.update_selected();
+  setTimeout(function () { $field.prop('selectionStart', $field.val().length); }, 100);
+  $field.trigger("danbooru:update-tag-counter");
 };
 
 
