@@ -2009,8 +2009,12 @@ class Post < ApplicationRecord
     false
   end
 
+  def deletedblocked?(user = CurrentUser.user)
+    is_deleted? && !user.is_moderator?
+  end
+
   def visible?(user = CurrentUser.user)
-    !safeblocked? && !levelblocked?(user) && !banblocked?(user)
+    !safeblocked? && !levelblocked?(user) && !banblocked?(user) && !deletedblocked?(user)
   end
 
   def reload(options = nil)
