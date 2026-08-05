@@ -2214,6 +2214,38 @@ class PostTest < ActiveSupport::TestCase
     end
   end
 
+  context "visibility:" do
+    setup do
+      @post = create(:post, is_deleted: true)
+    end
+
+    should "be deletedblocked for anonymous users" do
+      assert(@post.deletedblocked?(User.anonymous))
+      assert_not(@post.visible?(User.anonymous))
+    end
+
+    should "be deletedblocked for regular users" do
+      assert(@post.deletedblocked?(create(:user)))
+      assert_not(@post.visible?(create(:user)))
+    end
+
+    should "be deletedblocked for approvers" do
+      assert(@post.deletedblocked?(create(:approver)))
+      assert_not(@post.visible?(create(:approver)))
+    end
+
+    should "not be deletedblocked for moderators" do
+      assert_not(@post.deletedblocked?(create(:moderator_user)))
+      assert(@post.visible?(create(:moderator_user)))
+    end
+
+    should "not be deletedblocked when the post is not deleted" do
+      @post = create(:post)
+      assert_not(@post.deletedblocked?(User.anonymous))
+      assert(@post.visible?(User.anonymous))
+    end
+  end
+
   context "URLs:" do
     should "generate the correct urls for animated gifs" do
       @post = create(:post_with_file, filename: "test-animated-86x52.gif")

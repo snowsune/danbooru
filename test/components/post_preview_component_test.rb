@@ -127,8 +127,14 @@ class PostPreviewComponentTest < ViewComponent::TestCase
         @post = create(:post, is_deleted: true)
       end
 
-      should "should be visible when the show_deleted flag is set" do
+      should "not be visible to non-moderators even when the show_deleted flag is set" do
         node = render_preview(@post, current_user: User.anonymous, show_deleted: true)
+
+        assert_equal("", node.to_s)
+      end
+
+      should "be visible to moderators when the show_deleted flag is set" do
+        node = render_preview(@post, current_user: create(:moderator_user), show_deleted: true)
 
         assert_equal(post_path(@post), node.css("article a").attr("href").value)
         assert_equal(@post.media_asset.variant("180x180").file_url, node.css("article img").attr("src").value)

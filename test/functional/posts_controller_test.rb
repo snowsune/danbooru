@@ -207,7 +207,7 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
 
         should "show deleted posts for a status:DELETED search" do
           create(:post, is_deleted: true)
-          get_auth posts_path(tags: "status:DELETED"), @user
+          get_auth posts_path(tags: "status:DELETED"), create(:moderator_user)
           assert_select ".post-preview.post-status-deleted", count: 1
         end
       end
@@ -420,20 +420,26 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
           assert_select "#post_#{@post.id}", 0
         end
 
-        should "show deleted posts when searching for status:deleted" do
+        should "not show deleted posts to non-moderators when searching for status:deleted" do
           get posts_path(tags: "status:deleted")
           assert_response :success
-          assert_select "#post_#{@post.id}", 1
+          assert_select "#post_#{@post.id}", 0
         end
 
-        should 'show deleted posts when searching for status:"deleted"' do
-          get posts_path(tags: 'status:"deleted"')
+        should "show deleted posts to moderators when searching for status:deleted" do
+          get_auth posts_path(tags: "status:deleted"), create(:moderator_user)
           assert_response :success
           assert_select "#post_#{@post.id}", 1
         end
 
-        should "show deleted posts when searching for -status:active" do
-          get posts_path(tags: "-status:active")
+        should 'show deleted posts to moderators when searching for status:"deleted"' do
+          get_auth posts_path(tags: 'status:"deleted"'), create(:moderator_user)
+          assert_response :success
+          assert_select "#post_#{@post.id}", 1
+        end
+
+        should "show deleted posts to moderators when searching for -status:active" do
+          get_auth posts_path(tags: "-status:active"), create(:moderator_user)
           assert_response :success
           assert_select "#post_#{@post.id}", 1
         end
@@ -636,11 +642,40 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
       end
 
       context "a deleted post" do
-        should "render" do
+        setup do
           @post.delete!("no", user: @user)
+        end
+
+        should "be unavailable to anonymous users" do
           get post_path(@post)
 
           assert_response :success
+          assert_select ".image-container", /This post is unavailable/
+          assert_select "#image", false
+        end
+
+        should "be unavailable to regular users" do
+          get_auth post_path(@post), @user
+
+          assert_response :success
+          assert_select ".image-container", /This post is unavailable/
+          assert_select "#image", false
+        end
+
+        should "be unavailable to approvers" do
+          get_auth post_path(@post), create(:approver)
+
+          assert_response :success
+          assert_select ".image-container", /This post is unavailable/
+          assert_select "#image", false
+        end
+
+        should "be visible to moderators" do
+          get_auth post_path(@post), create(:moderator_user)
+
+          assert_response :success
+          assert_select "#image"
+          assert_select ".image-container", text: /This post is unavailable/, count: 0
         end
       end
 
