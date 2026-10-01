@@ -13,7 +13,6 @@ class TagImplication < TagRelationship
   validate :absence_of_transitive_relation
   validate :antecedent_is_not_aliased
   validate :consequent_is_not_aliased
-  validate :tag_categories_are_compatible, on: :request
   validate :meets_tag_size_requirements, on: :request
   validate :has_wiki_page, on: :request
 
@@ -102,15 +101,6 @@ class TagImplication < TagRelationship
       # We don't want to implicate a -> b if b is already aliased to c
       if TagAlias.active.exists?(["antecedent_name = ?", consequent_name])
         errors.add(:base, "Consequent tag must not be aliased to another tag")
-      end
-    end
-
-    # Require tags to have the same category. Doesn't apply when either tag is empty,
-    # because they could have been populated from a previous update script.
-    def tag_categories_are_compatible
-      return if antecedent_tag.empty? || consequent_tag.empty?
-      if antecedent_tag.category != consequent_tag.category
-        errors.add(:base, "Can't imply a #{antecedent_tag.category_name.downcase} tag to a #{consequent_tag.category_name.downcase} tag")
       end
     end
 

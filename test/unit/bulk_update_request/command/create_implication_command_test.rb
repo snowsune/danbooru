@@ -62,16 +62,14 @@ class CreateImplicationCommandTest < ActiveSupport::TestCase
         )
       end
 
-      should "fail for an implication between tags of different categories" do
-        create(:tag, name: "hatsune_miku", category: Tag.categories.character)
-        create(:tag, name: "vocaloid", category: Tag.categories.copyright)
-        create(:wiki_page, title: "hatsune_miku")
-        create(:wiki_page, title: "vocaloid")
+      should "allow an implication between tags of different categories" do
+        create(:tag, name: "soft_vore", category: Tag.categories.general, post_count: 10)
+        create(:tag, name: "endosoma", category: Tag.categories.trope, post_count: 10)
+        create(:wiki_page, title: "soft_vore")
+        create(:wiki_page, title: "endosoma")
 
-        assert_invalid_bur(
-          script: "imply hatsune_miku -> vocaloid",
-          errors: ["Can't create implication [[hatsune_miku]] -> [[vocaloid]] (Can't imply a character tag to a copyright tag)"],
-        )
+        bur = create(:bulk_update_request, script: "imply soft_vore -> endosoma")
+        assert_equal(true, bur.valid?)
       end
 
       should "succeed for tags that changed category in the same BUR" do
