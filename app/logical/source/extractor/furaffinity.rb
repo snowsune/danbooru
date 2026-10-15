@@ -55,7 +55,38 @@ class Source::Extractor
     end
 
     memoize def html_response
-      parsed_get(page_url)
+      if Danbooru.config.flaresolverr_url.present?
+        fetch_via_flaresolverr
+      else
+        parsed_get(page_url)
+      end
+    end
+
+    # For fetching via flaresolverr
+    def fetch_via_flaresolverr
+      return nil if page_url.blank?
+
+      cookies = [
+        ["a", credentials[:cookie_a]],
+        ["b", credentials[:cookie_b]],
+        ["sfw", "0"],
+      ].filter_map { |name, value| { name: name, value: value } if value.present? }
+
+      response = Danbooru::Http.internal.timeout(90).post(Danbooru.config.flaresolverr_url, json: {
+        cmd: "request.get",
+        url: page_url,
+        maxTimeout: 60_000,
+        cookies: cookies,
+      })
+      payload = response.parse.deep_stringify_keys if response.status.success?
+      html = payload&.dig("solution", "response")
+
+      if payload.blank? || payload["status"] != "ok" || html.blank?
+        message = payload&.dig("message").presence || "HTTP #{response.status}"
+        raise "FlareSolverr failed to fetch #{page_url} (#{message})"
+      end
+
+      Nokogiri::HTML5.parse(html, max_tree_depth: -1)
     end
 
     def http

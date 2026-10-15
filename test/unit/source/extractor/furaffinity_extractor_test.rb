@@ -73,4 +73,46 @@ module Source::Tests::Extractor
       )
     end
   end
+
+  class FuraffinityFlareSolverrTest < ActiveSupport::TestCase
+    setup do
+      Danbooru.config.stubs(:flaresolverr_url).returns("http://flaresolverr:8191/v1")
+    end
+
+    should "read the download URL from the page FlareSolverr returns" do
+      html = <<~HTML
+        <div id="submission-options">
+          <a class="button standard mobile-fix" href="//d.furaffinity.net/art/tershaserou/1792073798/1792073798.tershaserou_example.png">Download</a>
+        </div>
+      HTML
+      stub_flaresolverr(status: "ok", solution: { response: html, status: 200 })
+
+      strategy = Source::Extractor::Furaffinity.new("https://www.furaffinity.net/view/66707672/")
+
+      assert_equal(
+        ["https://d.furaffinity.net/art/tershaserou/1792073798/1792073798.tershaserou_example.png"],
+        strategy.image_urls,
+      )
+    end
+
+    should "report a FlareSolverr error instead of an empty page" do
+      stub_flaresolverr(status: "error", message: "Cloudflare challenge failed")
+      strategy = Source::Extractor::Furaffinity.new("https://www.furaffinity.net/view/66707672/")
+
+      error = assert_raises(RuntimeError) { strategy.image_urls }
+      assert_match("FlareSolverr failed to fetch https://www.furaffinity.net/view/66707672", error.message)
+      assert_match("Cloudflare challenge failed", error.message)
+    end
+
+    def stub_flaresolverr(payload)
+      response = HTTP::Response.new(
+        status: 200,
+        version: "1.1",
+        headers: { "Content-Type" => "application/json" },
+        body: payload.to_json,
+        request: HTTP::Request.new(verb: :post, uri: "http://flaresolverr:8191/v1"),
+      )
+      Danbooru::Http.any_instance.stubs(:post).returns(response)
+    end
+  end
 end

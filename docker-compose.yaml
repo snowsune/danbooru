@@ -124,6 +124,7 @@ x-base-template: &base-template
     DANBOORU_REDIS_URL: redis://redis:6379
     DANBOORU_IQDB_URL: http://iqdb:5588
     DANBOORU_AUTOTAGGER_URL: http://autotagger:5000
+    DANBOORU_FLARESOLVERR_URL: http://flaresolverr:8191/v1
     DANBOORU_IMAGE_STORAGE_PATH: /images
 
   tmpfs:
@@ -159,6 +160,18 @@ services:
       danbooru:
         condition: service_healthy
     command: ["bin/good_job", "start"]
+
+  # https://github.com/FlareSolverr/FlareSolverr
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      LOG_LEVEL: info
+      LOG_HTML: "false"
+      CAPTCHA_SOLVER: none
+    ports:
+      - "127.0.0.1:8191:8191"
 
   # https://github.com/danbooru/iqdb
   # https://hub.docker.com/repository/docker/evazion/iqdb
