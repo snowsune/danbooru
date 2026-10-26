@@ -56,6 +56,7 @@ x-base-env: &base-env
   DANBOORU_REDIS_URL: redis://redis:6379
   DANBOORU_IQDB_URL: http://iqdb:5588
   DANBOORU_IMAGE_STORAGE_PATH: /images
+  DANBOORU_FLARESOLVERR_URL: http://flaresolverr:8191/v1
   SHAKAPACKER_DEV_SERVER_HOST: webpack
   GOOD_JOB_EXECUTION_MODE: external
 
@@ -146,6 +147,17 @@ services:
 
   # https://github.com/danbooru/iqdb
   # https://hub.docker.com/repository/docker/evazion/iqdb
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      LOG_LEVEL: info
+      LOG_HTML: "false"
+      CAPTCHA_SOLVER: none
+    ports:
+      - "127.0.0.1:8191:8191"
+
   iqdb:
     image: evazion/iqdb
     volumes:

@@ -55,11 +55,55 @@ class Source::Extractor
     end
 
     memoize def html_response
-      parsed_get(page_url)
+      if Danbooru.config.flaresolverr_url.present?
+        html = flaresolverr_solution&.dig("response")
+        return nil if html.blank?
+
+        Nokogiri::HTML5.parse(html, max_tree_depth: -1)
+      else
+        parsed_get(page_url)
+      end
+    end
+
+    # FlareSolverr is a JSON API, not an HTTP proxy. Ask it to load a FA page in a
+    # browser, then reuse the clearance cookies and user-agent for CDN downloads.
+    # d.furaffinity.net is also behind Cloudflare, so a/b cookies alone are not enough.
+    memoize def flaresolverr_solution
+      return nil if Danbooru.config.flaresolverr_url.blank?
+
+      challenge_url = page_url.presence || "https://www.furaffinity.net/"
+      cookies = [
+        ["a", credentials[:cookie_a]],
+        ["b", credentials[:cookie_b]],
+        ["sfw", "0"],
+      ].filter_map { |name, value| { name: name, value: value } if value.present? }
+
+      response = Danbooru::Http.internal.timeout(90).post(Danbooru.config.flaresolverr_url, json: {
+        cmd: "request.get",
+        url: challenge_url,
+        maxTimeout: 60_000,
+        cookies: cookies,
+      })
+      payload = response.parse.deep_stringify_keys if response.status.success?
+      solution = payload&.dig("solution")
+
+      if payload.blank? || payload["status"] != "ok" || solution.blank?
+        message = payload&.dig("message").presence || "HTTP #{response.status}"
+        raise "FlareSolverr failed to fetch #{challenge_url} (#{message})"
+      end
+
+      solution
     end
 
     def http
-      super.cookies(a: credentials[:cookie_a], b: credentials[:cookie_b], sfw: 0)
+      client = super.cookies(a: credentials[:cookie_a], b: credentials[:cookie_b], sfw: 0)
+      return client if Danbooru.config.flaresolverr_url.blank?
+
+      solution = flaresolverr_solution
+      cookie_hash = Array(solution["cookies"]).to_h { |cookie| [cookie["name"], cookie["value"]] }
+      client = client.cookies(cookie_hash) if cookie_hash.present?
+      client = client.headers("User-Agent": solution["userAgent"]) if solution["userAgent"].present?
+      client
     end
   end
 end

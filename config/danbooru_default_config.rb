@@ -537,6 +537,13 @@ module Danbooru
     def furaffinity_cookie_b
     end
 
+    # FlareSolverr endpoint
+    # TODO: WRITE MORE
+    #
+    # DANBOORU_FLARESOLVERR_URL=http://flaresolverr:8191/v1
+    def flaresolverr_url
+    end
+
     # Your ArtStreet (medibang.com) "MSID" cookie. Needed to view R-18 works.
     #
     # After you create an account, go to https://medibang.com/myProfile/myProfileModifyForm/ to set your age to 18+,
