@@ -93,7 +93,7 @@ class PostFlag < ApplicationRecord
     errors.add(:post, "is pending and cannot be flagged") if post.is_pending? && !is_deletion
     errors.add(:post, "is deleted and cannot be flagged") if post.is_deleted? && creator != User.system # DanbooruBot is allowed to prune expired appeals
     errors.add(:post, "is already flagged") if post.is_flagged? && !is_deletion
-    errors.add(:post, "cannot be flagged") if !post.visible?(creator)
+    errors.add(:post, "cannot be flagged") if !post.visible?(creator) && !post.is_deleted?
 
     flag = post.flags.in_cooldown.last
     if !is_deletion && !creator.is_approver? && flag.present?

@@ -2013,8 +2013,12 @@ class Post < ApplicationRecord
     is_deleted? && !user.is_moderator?
   end
 
+  def artistblocked?(user = CurrentUser.user)
+    tag_count_artist == 0 && user.is_anonymous?
+  end
+
   def visible?(user = CurrentUser.user)
-    !safeblocked? && !levelblocked?(user) && !banblocked?(user) && !deletedblocked?(user)
+    !safeblocked? && !levelblocked?(user) && !banblocked?(user) && !deletedblocked?(user) && !artistblocked?(user)
   end
 
   def reload(options = nil)

@@ -273,6 +273,8 @@
       <p>This page has been removed because of a takedown request or rule violation.</p>
     <% elsif @post.deletedblocked? -%>
       <p>This post is unavailable.</p>
+    <% elsif @post.artistblocked? -%>
+      <p><%= link_to "You need to log in to see this image", login_path(url: request.fullpath) %>.</p>
     <% elsif @post.levelblocked? -%>
       <p><%= link_to "You need a gold account to see this image", new_user_upgrade_path %>.</p>
     <% elsif @post.safeblocked? -%>
