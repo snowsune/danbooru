@@ -250,6 +250,12 @@
     </div>
   <% end %>
 
+  <% if @post.tag_count_artist == 0 && !CurrentUser.user.is_anonymous? %>
+    <div class="notice notice-small post-notice post-notice-no-artist">
+      You're logged in so you can see this post! But it WILL NOT be published to wider users because it is missing an artist: tag. Make sure to add proper attribution!! --Vixi
+    </div>
+  <% end %>
+
   <% if @post.parent.present? %>
     <div class="notice notice-small post-notice post-notice-child">
       <%= render "posts/partials/show/parent_notice", parent: @post.parent, children: @sibling_posts.to_a %>

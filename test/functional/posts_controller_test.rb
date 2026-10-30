@@ -814,6 +814,28 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
           assert_response :success
           assert_select "#post_#{@post.id}", 1
         end
+
+        should "show a missing artist warning to logged in users" do
+          get_auth post_path(@post), create(:user)
+
+          assert_response :success
+          assert_select ".post-notice-no-artist", /it WILL NOT be published to wider users because it is missing an artist: tag/
+        end
+
+        should "not show a missing artist warning to anonymous users" do
+          get post_path(@post)
+
+          assert_response :success
+          assert_select ".post-notice-no-artist", 0
+        end
+
+        should "not show a missing artist warning when the post has an artist tag" do
+          @post.update!(tag_string: "tagme artist:some_artist")
+          get_auth post_path(@post), create(:user)
+
+          assert_response :success
+          assert_select ".post-notice-no-artist", 0
+        end
       end
 
       context "a deleted post" do
