@@ -3,7 +3,7 @@ require "test_helper"
 class PostGalleryComponentTest < ViewComponent::TestCase
   context "The PostGalleryComponent" do
     should "render post previews inside a grid gallery" do
-      post = create(:post)
+      post = create(:post, tag_string: "artist:some_artist")
 
       render_inline(PostGalleryComponent.new) do |gallery|
         gallery.with_post(post: post, current_user: User.anonymous)
@@ -15,7 +15,7 @@ class PostGalleryComponentTest < ViewComponent::TestCase
     end
 
     should "render post previews inside an inline gallery" do
-      post = create(:post)
+      post = create(:post, tag_string: "artist:some_artist")
 
       render_inline(PostGalleryComponent.new(inline: true)) do |gallery|
         gallery.with_post(post: post, current_user: User.anonymous)

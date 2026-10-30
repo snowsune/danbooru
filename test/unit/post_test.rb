@@ -2398,8 +2398,30 @@ class PostTest < ActiveSupport::TestCase
     end
 
     should "not be deletedblocked when the post is not deleted" do
-      @post = create(:post)
+      @post = create(:post, tag_string: "artist:bkub tagme")
       assert_not(@post.deletedblocked?(User.anonymous))
+      assert(@post.visible?(User.anonymous))
+    end
+  end
+
+  context "artist visibility:" do
+    setup do
+      @post = create(:post, tag_string: "tagme")
+    end
+
+    should "be artistblocked for anonymous users when the post has no artist tags" do
+      assert(@post.artistblocked?(User.anonymous))
+      assert_not(@post.visible?(User.anonymous))
+    end
+
+    should "not be artistblocked for logged in users when the post has no artist tags" do
+      assert_not(@post.artistblocked?(create(:user)))
+      assert(@post.visible?(create(:user)))
+    end
+
+    should "not be artistblocked for anonymous users when the post has an artist tag" do
+      @post = create(:post, tag_string: "artist:bkub tagme")
+      assert_not(@post.artistblocked?(User.anonymous))
       assert(@post.visible?(User.anonymous))
     end
   end

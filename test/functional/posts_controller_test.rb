@@ -25,14 +25,14 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
   context "The posts controller" do
     setup do
       @user = travel_to(1.month.ago) { create(:user) }
-      @post = as(@user) { create(:post, tag_string: "aaaa") }
+      @post = as(@user) { create(:post, tag_string: "aaaa artist:some_artist") }
       Danbooru.config.stubs(:canonical_url).returns("http://www.example.com")
     end
 
     context "index action" do
       setup do
         mock_post_search_rankings(Date.today, [["1girl", 100], ["original", 50]])
-        create_list(:post, 2)
+        create_list(:post, 2, tag_string: "tag1 tag2 artist:some_artist")
       end
 
       should "render the quick edit form buttons" do
@@ -246,7 +246,7 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
         should "render for an aliased tag" do
           create(:tag_alias, antecedent_name: "lav", consequent_name: "looking_at_viewer")
           as(@user) { create(:wiki_page, title: "looking_at_viewer") }
-          @post = create(:post, tag_string: "looking_at_viewer", rating: "s")
+          @post = create(:post, tag_string: "looking_at_viewer artist:some_artist", rating: "s")
 
           get posts_path, params: { tags: "lav" }
           assert_response :success
@@ -351,7 +351,7 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
         end
 
         should "render an error when searching for too many tags" do
-          get posts_path, params: { tags: "1 2 3" }
+          get posts_path, params: { tags: (1..17).to_a.join(" ") }
 
           assert_response 422
           assert_select "h1", "Search Error"
@@ -700,7 +700,7 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
           @approver = create(:approver_user)
 
           as(@user) do
-            @post.update!(tag_string: "1girl solo highres blah 2001")
+            @post.update!(tag_string: "1girl solo highres blah 2001 artist:some_artist")
             Tag.find_by_name("1girl").update(post_count: 20_000)
             Tag.find_by_name("solo").update(post_count: 2_000)
             Tag.find_by_name("blah").update(post_count: 1)
@@ -780,6 +780,39 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
             assert_equal "false", element.attribute("data-current-user-is-anonymous").value
             assert_equal @user.level.to_s, element.attribute("data-current-user-level").value
           end
+        end
+      end
+
+      context "a post without an artist tag" do
+        setup do
+          @post = create(:post_with_file, tag_string: "tagme")
+        end
+
+        should "be unavailable to anonymous users" do
+          get post_path(@post)
+
+          assert_response :success
+          assert_select ".image-container", /You need to log in to see this image/
+          assert_select "#image", false
+        end
+
+        should "be visible to logged in users" do
+          get_auth post_path(@post), create(:user)
+
+          assert_response :success
+          assert_select "#image"
+        end
+
+        should "be hidden from anonymous users in search results" do
+          get posts_path
+          assert_response :success
+          assert_select "#post_#{@post.id}", 0
+        end
+
+        should "be shown to logged in users in search results" do
+          get_auth posts_path, create(:user)
+          assert_response :success
+          assert_select "#post_#{@post.id}", 1
         end
       end
 
@@ -1314,11 +1347,11 @@ class PostsControllerTest < ActionDispatch::IntegrationTest
 
       should "work" do
         @version = @post.versions.first
-        assert_equal("aaaa", @version.tags)
+        assert_equal("aaaa some_artist", @version.tags)
         put_auth revert_post_path(@post), @user, params: { version_id: @version.id }
         assert_redirected_to post_path(@post)
         @post.reload
-        assert_equal("aaaa", @post.tag_string)
+        assert_equal("aaaa some_artist", @post.tag_string)
       end
 
       should "not allow reverting to a previous version of another post" do

@@ -5,7 +5,7 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
     setup do
       @mod = create(:moderator_user)
       @user = create(:member_user)
-      @post = create(:post)
+      @post = create(:post, tag_string: "artist:some_artist")
     end
 
     context "index action" do

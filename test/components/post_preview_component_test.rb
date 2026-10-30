@@ -10,7 +10,7 @@ class PostPreviewComponentTest < ViewComponent::TestCase
   context "The PostPreviewComponent" do
     context "for a post visible to the current user" do
       should "render" do
-        @post = create(:post)
+        @post = create(:post, tag_string: "artist:some_artist")
         node = render_preview(@post, current_user: User.anonymous)
 
         assert_equal(post_path(@post), node.css("article a").attr("href").value)
@@ -20,7 +20,7 @@ class PostPreviewComponentTest < ViewComponent::TestCase
 
     context "for a video post" do
       should "render" do
-        @post = create(:post_with_file, filename: "webm/test-512x512.webm").reload
+        @post = create(:post_with_file, tag_string: "artist:some_artist", filename: "webm/test-512x512.webm").reload
         node = render_preview(@post, current_user: User.anonymous)
 
         assert_equal(post_path(@post), node.css("article a").attr("href").value)
@@ -31,7 +31,7 @@ class PostPreviewComponentTest < ViewComponent::TestCase
 
     context "for a video post with sound" do
       should "render" do
-        @post = create(:post_with_file, tag_string: "sound", filename: "mp4/test-audio.mp4").reload
+        @post = create(:post_with_file, tag_string: "sound artist:some_artist", filename: "mp4/test-audio.mp4").reload
         node = render_preview(@post, current_user: User.anonymous)
 
         assert_equal(post_path(@post), node.css("article a").attr("href").value)
@@ -104,7 +104,7 @@ class PostPreviewComponentTest < ViewComponent::TestCase
 
     context "for a non-safe post" do
       setup do
-        @post = create(:post, rating: "q")
+        @post = create(:post, rating: "q", tag_string: "artist:some_artist")
       end
 
       should "should be visible to users with safe mode off" do

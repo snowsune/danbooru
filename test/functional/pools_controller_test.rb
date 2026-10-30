@@ -7,7 +7,7 @@ class PoolsControllerTest < ActionDispatch::IntegrationTest
       @mod = create(:moderator_user, created_at: 1.month.ago)
 
       as(@user) do
-        @post = create(:post)
+        @post = create(:post, tag_string: "artist:some_artist")
         @pool = create(:pool, name: "Beautiful Smile", description: "[[touhou]]")
       end
     end

@@ -14,7 +14,7 @@ class SimilarImagesComponentTest < ViewComponent::TestCase
 
     context "with only high similarity matches" do
       should "render the posts" do
-        post = create(:post)
+        post = create(:post, tag_string: "artist:some_artist")
         render_inline(SimilarImagesComponent.new(matches: [{ post: post, score: 80 }], current_user: User.anonymous))
 
         assert_css(".post-gallery article", count: 1)
@@ -25,8 +25,8 @@ class SimilarImagesComponentTest < ViewComponent::TestCase
 
     context "with only low similarity matches" do
       should "render the posts" do
-        post1 = create(:post)
-        post2 = create(:post)
+        post1 = create(:post, tag_string: "artist:some_artist")
+        post2 = create(:post, tag_string: "artist:some_artist")
         render_inline(SimilarImagesComponent.new(matches: [{ post: post1, score: 10 }, { post: post2, score: 30 }], current_user: User.anonymous))
 
         assert_css(".post-gallery article", count: 2)
@@ -37,8 +37,8 @@ class SimilarImagesComponentTest < ViewComponent::TestCase
 
     context "with both high and low similarity matches" do
       should "render both matches and show the low similarity toggle" do
-        high_post = create(:post)
-        low_post  = create(:post)
+        high_post = create(:post, tag_string: "artist:some_artist")
+        low_post  = create(:post, tag_string: "artist:some_artist")
         matches = [{ post: high_post, score: 85 }, { post: low_post, score: 10 }]
 
         render_inline(SimilarImagesComponent.new(matches: matches, current_user: User.anonymous))
@@ -51,7 +51,7 @@ class SimilarImagesComponentTest < ViewComponent::TestCase
 
     context "with matches below the low similarity threshold" do
       should "not render those matches" do
-        post = create(:post)
+        post = create(:post, tag_string: "artist:some_artist")
         render_inline(SimilarImagesComponent.new(matches: [{ post: post, score: -1 }], current_user: User.anonymous))
 
         assert_text("No similar posts found.")
